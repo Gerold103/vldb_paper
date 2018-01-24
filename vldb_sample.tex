@@ -10,17 +10,15 @@
 
 
 % Include information below and uncomment for camera ready
-\vldbTitle{A Sample Proceedings of the VLDB Endowment Paper in LaTeX Format}
-\vldbAuthors{Ben Trovato, G. K. M. Tobin, Lars Th{\sf{\o}}rv{$\ddot{\mbox{a}}$}ld, Lawrence P. Leipuner, Sean Fogarty, Charles Palmer, John Smith, Julius P.~Kumquat, and Ahmet Sacan}
+\vldbTitle{Deferred secondary index update with LSM-trees}
+\vldbAuthors{Vladislav Shpilevoy, Konstantin Osipov, Dmitry Volkanov}
 \vldbDOI{https://doi.org/TBD}
 
 \begin{document}
 
 % ****************** TITLE ****************************************
 
-\title{A Sample {\ttlit Proceedings of the VLDB Endowment} Paper in LaTeX
-Format\titlenote{for use with vldb.cls}}
-
+\title{Deferred secondary index update with {\ttlit LSM-trees}}
 
 % possible, but not really needed or used for PVLDB:
 %\subtitle{[Extended Abstract]
@@ -52,7 +50,7 @@ Format\titlenote{for use with vldb.cls}}
 % without further effort on your part as the last section in
 % the body of your article BEFORE References or any Appendices.
 
-\numberofauthors{8} %  in this sample file, there are a *total*
+\numberofauthors{3} %  in this sample file, there are a *total*
 % of EIGHT authors. SIX appear on the 'first-page' (for formatting
 % reasons) and the remaining two appear in the \additionalauthors section.
 
@@ -69,64 +67,44 @@ Format\titlenote{for use with vldb.cls}}
 %
 % 1st. author
 \alignauthor
-Ben Trovato\titlenote{Dr.~Trovato insisted his name be first.}\\
-       \affaddr{Institute for Clarity in Documentation}\\
-       \affaddr{1932 Wallamaloo Lane}\\
-       \affaddr{Wallamaloo, New Zealand}\\
-       \email{trovato@corporation.com}
+Vladislav Shpilevoy
+       \affaddr{Lomonosov Moscow State University}\\
+       \email{v.shpilevoy@tarantool.org}
 % 2nd. author
 \alignauthor
-G.K.M. Tobin\titlenote{The secretary disavows
-any knowledge of this author's actions.}\\
-       \affaddr{Institute for Clarity in Documentation}\\
-       \affaddr{P.O. Box 1212}\\
-       \affaddr{Dublin, Ohio 43017-6221}\\
-       \email{webmaster@marysville-ohio.com}
+Konstantin Osipov
+       \affaddr{Tarantool}\\
+       \email{kostja@tarantool.org}
 % 3rd. author
-\alignauthor Lars Th{\Large{\sf{\o}}}rv{$\ddot{\mbox{a}}$}ld\titlenote{This author is the
-one who did all the really hard work.}\\
-       \affaddr{The Th{\large{\sf{\o}}}rv{$\ddot{\mbox{a}}$}ld Group}\\
-       \affaddr{1 Th{\large{\sf{\o}}}rv{$\ddot{\mbox{a}}$}ld Circle}\\
-       \affaddr{Hekla, Iceland}\\
-       \email{larst@affiliation.org}
-\and  % use '\and' if you need 'another row' of author names
-% 4th. author
-\alignauthor Lawrence P. Leipuner\\
-       \affaddr{Brookhaven Laboratories}\\
-       \affaddr{Brookhaven National Lab}\\
-       \affaddr{P.O. Box 5000}\\
-       \email{lleipuner@researchlabs.org}
-% 5th. author
-\alignauthor Sean Fogarty\\
-       \affaddr{NASA Ames Research Center}\\
-       \affaddr{Moffett Field}\\
-       \affaddr{California 94035}\\
-       \email{fogartys@amesres.org}
-% 6th. author
-\alignauthor Charles Palmer\\
-       \affaddr{Palmer Research Laboratories}\\
-       \affaddr{8600 Datapoint Drive}\\
-       \affaddr{San Antonio, Texas 78229}\\
-       \email{cpalmer@prl.com}
+\alignauthor
+Dmitry Volkanov
+       \affaddr{Lomonosov Moscow State University}\\
+       \email{volkanov@lvk.cs.msu.su}
 }
-% There's nothing stopping you putting the seventh, eighth, etc.
-% author on the opening page (as the 'third row') but we ask,
-% for aesthetic reasons that you place these 'additional authors'
-% in the \additional authors block, viz.
-\additionalauthors{Additional authors: John Smith (The Th{\o}rv\"{a}ld Group, {\texttt{jsmith@affiliation.org}}), Julius P.~Kumquat
-(The \raggedright{Kumquat} Consortium, {\small \texttt{jpkumquat@consortium.net}}), and Ahmet Sacan (Drexel University, {\small \texttt{ahmetdevel@gmail.com}})}
-\date{30 July 1999}
+\date{24 January 2018}
 % Just remember to make sure that the TOTAL number of authors
 % is the number that will appear on the first page PLUS the
 % number that will appear in the \additionalauthors section.
 
-
 \maketitle
 
 \begin{abstract}
-The abstract for your paper for the PVLDB Journal submission.
-The template and the example document are based on the ACM SIG Proceedings  templates. This file is part of a package for preparing the submissions for review. These files are in the camera-ready format, but they do not contain the full copyright note.
-Note that after the notification of acceptance, there will be an updated style file for the camera-ready submission containing the copyright note.
+Log-structured merge-trees (LSM-trees) are becoming more and more widely
+adopted as a staple data structure in secondary storage database management
+systems, ending the half-a-century-long dominance of B-trees. The main
+LSM-tree's benifit is its ability to store many versions of the same key - it
+allows to LSM-based tables do not read and delete old data explicitly from
+primary index on such operations as deletion or replace to delete old data. Old
+data is deleted by new data during compaction instead. But this advantage is
+nullifed by secondary indexes, because replace/delete-like operations require
+read and delete old data from each secondary index explicitly. This paper
+presents a modification for LSM-tree data structure, which allows to do not read
+any index on replace/delete operations even if there are secondary indexes in
+the table.
+Experimental research of the modified LSM-tree shows write speed growth 1.5 to
+10 times againts original LSM-tree on tables with 2-4 secondary indexes.
+And the more secondary indexes there are, the faster the new LSM-tree works on
+write operations.
 \end{abstract}
 
 
