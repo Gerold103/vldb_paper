@@ -112,31 +112,60 @@ works on write operations.
 
 
 \section{Introduction}
-The \textit{proceedings} are the records of a conference.
-ACM, as well as PVLDB, seeks to give these conference by-products a uniform,
-high-quality appearance.  To do this, ACM / PVLDB has some rigid
-requirements for the format of the proceedings documents: there
-is a specified format (balanced  double columns), a specified
-set of fonts (Arial or Helvetica and Times Roman) in
-certain specified sizes (for instance, 9 point for body copy),
-a specified live area (18 $\times$ 23.5 cm [7" $\times$ 9.25"]) centered on
-the page, specified size of margins (2.54cm [1"] top and
-bottom and 1.9cm [.75"] left and right; specified column width
-(8.45cm [3.33"]) and gutter size (.083cm [.33"]).
+Log-Structured Merge trees were developed for write-intensive tasks in 1990th
+and were used in file systems and for reserve copying. But their prevalence was
+restricted by hidden reads.
 
-The good news is, with only a handful of manual
-settings\footnote{Two of these, the {\texttt{\char'134 numberofauthors}}
-and {\texttt{\char'134 alignauthor}} commands, you have
-already used; another, {\texttt{\char'134 balancecolumns}}, will
-be used in your very last run of \LaTeX\ to ensure
-balanced column heights on the last page.}, the \LaTeX\ document
-class file handles all of this for you.
+These are the reads which accompany writes: e.g. when it’s necessary to delete
+old data from a secondary index after an update, or check an unique or a foreign
+key constraint. A significant amount of reads in a modern database is hidden.
+Such reads, when followed by a write, cost nearly nothing in a B-tree, but can
+penalize performance of an LSM-tree based table to an extent when its write
+advantage becomes completely diluted.
 
-The remainder of this document is concerned with showing, in
-the context of an ``actual'' document, the \LaTeX\ commands
-specifically available for denoting the structure of a
-proceedings paper, rather than with giving rigorous descriptions
-or explanations of such commands.
+With Solid-State Drive (SSD) appearance cost of random writes had started
+contribute to overall performance way more heavily than cost of random reads,
+and nowadays the LSM-tree is consideted to be a standard data structure for
+databases. For example, it is used in LevelDB, RocksDB, Cassandra, Tarantool,
+BigTable, Hbase, Riak, MySQL (MyRocks).
+
+However SSD does not help in a special case, which is very popular and dilutes
+LSM-tree's ability to store multiple versions of the same keys. It is linked
+with LSM-tree compaction algorithm, and appears on tables with multiple indexes.
+
+In a primary LSM-tree based index any replace or delete operation is executed
+with no hidden reads because of LSM-tree ability to store multiple key versions.
+A new tuple is just inserted into memory and after some compactions discards old
+tuples. But it is not possible for secondary indexes. If a table contains
+secondary indexes, any update operation must read an old tuple from a primary
+index, extract from it secondary keys and delete them from each secondary index
+explictly. That is any update of such table produces hidden reads from a primary
+index.
+
+Primary index read and explicit old tuple deletion can not be avoided, because
+LSM-tree deletes old versions of the key, only if these versions are equal by
+the key. If a request changes a secondary key in an exising tuple and does not
+deletes old one, then it is not deleted from a secondary index, becuase LSM-tree
+considers these two records to have different keys.
+
+% A primary index stores tuples as they were inserted by an user - all columns are
+% stored. A secondary index stores only its key columns, by which the index is
+% sorted, and primary index columns. It saves memory because secoundary index
+% count can be big, and storage of entire copy of each tuple in each index would
+% be very expensive.
+
+
+% \begin{figure}
+% \centering
+% \centerline{\includegraphics[width=0.5\textwidth]{sk_record}}
+% \caption{Secondary index and request structure structure}
+% \label{fig:sk_record}
+% \end{figure}
+% If an user's request contains a condition allowing to use a secondary index's
+% sorting order, then in the secondary index the search is executed followed by a
+% search in a primary index by a primary key from the found tuple. It is where the
+% primary columns from a secondary index's tuple are used - they forms a link to
+% the full record in a primary index.
 
 \section{The {\secit Body} of The Paper}
 Typically, the body of a paper is organized
