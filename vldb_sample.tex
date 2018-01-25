@@ -89,22 +89,23 @@ Dmitry Volkanov
 \maketitle
 
 \begin{abstract}
-Log-structured merge-trees (LSM-trees) are becoming more and more widely
+Log-Structured merge-trees (LSM-trees) are becoming more and more widely
 adopted as a staple data structure in secondary storage database management
-systems, ending the half-a-century-long dominance of B-trees. The main
-LSM-tree's benifit is its ability to store many versions of the same key - it
-allows to LSM-based tables do not read and delete old data explicitly from
-primary index on such operations as deletion or replace to delete old data. Old
-data is deleted by new data during compaction instead. But this advantage is
-nullifed by secondary indexes, because replace/delete-like operations require
-read and delete old data from each secondary index explicitly. This paper
-presents a modification for LSM-tree data structure, which allows to do not read
-any index on replace/delete operations even if there are secondary indexes in
-the table.
+systems, ending the half-a-century-long dominance of B-trees. The major
+LSM-tree's advantage is that it writes new data and old data updates on disk
+always sequentially. It is possible due to LSM-tree's ability to store many
+versions of the same key - it allows to LSM-based tables do not read and delete
+old data explicitly from primary index on such operations as deletion or replace
+to delete old data. Data is deleted by new data during compaction instead. But
+this advantage is nullifed by secondary indexes, because replace/delete-like
+operations require read and delete old data from each secondary index explicitly.
+This paper presents a modification for LSM-tree data structure, which allows to
+do not read any index on replace/delete operations even if there are
+non-secondary indexes in the table.
 Experimental research of the modified LSM-tree shows write speed growth 1.5 to
-10 times againts original LSM-tree on tables with 2-4 secondary indexes.
-And the more secondary indexes there are, the faster the new LSM-tree works on
-write operations.
+10 times againts original LSM-tree on tables with 2-4 non-unique secondary
+indexes. And the more secondary indexes there are, the faster the new LSM-tree
+works on write operations.
 \end{abstract}
 
 
