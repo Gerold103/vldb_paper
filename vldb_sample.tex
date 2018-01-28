@@ -229,85 +229,76 @@ with LSM-tree compaction algorithm, and appears on tables with multiple indexes.
 In a primary LSM-tree based index any replace or delete operation is executed
 with no hidden reads because of LSM-tree ability to store multiple key versions.
 A new tuple is just inserted into memory and after some compactions discards old
-tuples. But it is not possible for secondary indexes. If a table contains
-secondary indexes, any update operation must read an old tuple from a primary
-index, extract from it secondary keys and delete them from each secondary index
-explictly. That is any update of such table produces hidden reads from a primary
-index.
+tuples. But it is not possible if there are secondary indexes. If a table
+contains secondary indexes, any update operation must read an old tuple from a
+primary index, extract from it secondary keys and delete them from each
+secondary index explictly. That is any update of such table produces hidden
+reads from a primary index.
 
-Primary index read and explicit old tuple deletion can not be avoided, because
-LSM-tree deletes old versions of the key, only if these versions are equal by
-the key. If a request changes a secondary key in an exising tuple and does not
-deletes old one, then it is not deleted from a secondary index, becuase LSM-tree
-considers these two records to have different keys.
+Primary index read and explicit old tuple deletion can not be avoided in classic
+LSM-tree, because it deletes old versions of the key only if these versions are
+equal by the key. If a request changes a secondary key in an exising tuple and
+does not deletes old one, then it is not deleted from a secondary index.
+LSM-tree considers new and old tuple not to be different versions of the same
+key, but to be different keys.
 
-% A primary index stores tuples as they were inserted by an user - all columns are
-% stored. A secondary index stores only its key columns, by which the index is
-% sorted, and primary index columns. It saves memory because secoundary index
-% count can be big, and storage of entire copy of each tuple in each index would
-% be very expensive.
+The paper describes a new LSM-tree compaction algorithm, a new LSM-tree based
+table update and read algorithms. Replace and delete operations on the new
+LSM-tree do not any reads regardless of secondary index number, if all of them
+are not unique. Experiments show exponential requests number per second (RPS)
+grow on some loading types and some schemas. For example, on a table with 3
+non-unique secondary indexes and replace/delete batched requests RPS increased
+up to 10 times.
 
+\section{Background and motivation}
+This section defines some LSM-tree basics: how it is can be stored on disk and
+in memory, how compaction, update and read works. What LSM-tree parameters are
+typically configurable.
 
-% \begin{figure}
-% \centering
-% \centerline{\includegraphics[width=0.5\textwidth]{sk_record}}
-% \caption{Secondary index and request structure structure}
-% \label{fig:sk_record}
-% \end{figure}
-% If an user's request contains a condition allowing to use a secondary index's
-% sorting order, then in the secondary index the search is executed followed by a
-% search in a primary index by a primary key from the found tuple. It is where the
-% primary columns from a secondary index's tuple are used - they forms a link to
-% the full record in a primary index.
+LSM-tree is a data structure optimized for write-intensive tasks. It has
+multiple levels: zero-level is stored in a memory and other on a disk.
+Zero-level amasses updates and periodically is dumped on to a disk to become
+first level. Zero-level after dump are cleaned up and collects new updates. And
+so on.
 
-\section{The {\secit Body} of The Paper}
-Typically, the body of a paper is organized
-into a hierarchical structure, with numbered or unnumbered
-headings for sections, subsections, sub-subsections, and even
-smaller sections.  The command \texttt{{\char'134}section} that
-precedes this paragraph is part of such a
-hierarchy.\footnote{This is the second footnote.  It
-starts a series of three footnotes that add nothing
-informational, but just give an idea of how footnotes work
-and look. It is a wordy one, just so you see
-how a longish one plays out.} \LaTeX\ handles the numbering
-and placement of these headings for you, when you use
-the appropriate heading commands around the titles
-of the headings.  If you want a sub-subsection or
-smaller part to be unnumbered in your output, simply append an
-asterisk to the command name.  Examples of both
-numbered and unnumbered headings will appear throughout the
-balance of this sample document.
+Zero-level usage allows to write updates to a disk in batches regardless of
+their order, keys, types. Even delete is put in a zero-level as a tuple of a
+special type.
 
-Because the entire article is contained in
-the \textbf{document} environment, you can indicate the
-start of a new paragraph with a blank line in your
-input file; that is why this sentence forms a separate paragraph.
+When level number became too big, the LSM-tree is compacted - several levels are
+merged in a new one. During compaction new tuples discard old tuples of the same
+key. For example, delete discards all older data and sometimes itself; replace
+discards all older data, but not itself.
 
-\subsection{Type Changes and {\subsecit Special} Characters}
-We have already seen several typeface changes in this sample.  You
-can indicate italicized words or phrases in your text with
-the command \texttt{{\char'134}textit}; emboldening with the
-command \texttt{{\char'134}textbf}
-and typewriter-style (for instance, for computer code) with
-\texttt{{\char'134}texttt}.  But remember, you do not
-have to indicate typestyle changes when such changes are
-part of the \textit{structural} elements of your
-article; for instance, the heading of this subsection will
-be in a sans serif\footnote{A third footnote, here.
-Let's make this a rather short one to
-see how it looks.} typeface, but that is handled by the
-document class file. Take care with the use
-of\footnote{A fourth, and last, footnote.}
-the curly braces in typeface changes; they mark
-the beginning and end of
-the text that is to be in the different typeface.
+LSM-tree can store levels in multiple ways. For example, memory level can be
+B-tree or Red-Black tree. Disk levels can be organized as B-trees or sorted
+arrays. In the paper sorted arrays on disk and B+ tree in memory are considered.
 
-You can use whatever symbols, accented characters, or
-non-English characters you need anywhere in your document;
-you can find a complete list of what is
-available in the \textit{\LaTeX\
-User's Guide}\cite{Lamport:LaTeX}.
+\subsection{Compaction}
+\begin{figure}
+\centering
+\includegraphics[width=0.4\textwidth]{compaction_schema}
+\caption{LSM-tree ranges dump and compaction}
+\label{fig:compaction_schema}
+\end{figure}
+Each level consists of multiple sublevels. Each sublevel is an array sorted by
+a key (in a case of LSM-tree index the key consists of index parts) and
+containig a specific key values range. During compaction some sublevels of each
+levels are merge-sorted into a new sorted array. It is known, that if one key
+version is on level $i$ and another on $j < i$, then the key version on level
+$j$ is newer and another one is discarded when compacted.
+
+Compaction procecure is needed to reduce level count and to discard old tuples
+to make room for new ones. Compaction frequency is regulated by LSM-tree
+parameters level size ratio and maximal sublevels count. In each pair of
+neighbour levels $i$ and $i + 1$ size of a level $i + 1$ must be greater than
+level $i$ size $*$ level size ratio at least. If maximal sublevels count per
+level is exceeded or level size ratio is violated, then compaction procedure
+merges as much sublevels as needed to satisfy both limitations.
+
+In practice, sublevels are produced by memory level dump and by spliting index
+key values into ranges, when each range stores and maintains its own sublevels
+independently of other ranges (see Figure \ref{fig:compaction_schema}).
 
 \subsection{Math Equations}
 You may want to display math equations in three distinct styles:
