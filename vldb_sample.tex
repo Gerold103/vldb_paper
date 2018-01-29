@@ -300,6 +300,57 @@ In practice, sublevels are produced by memory level dump and by spliting index
 key values into ranges, when each range stores and maintains its own sublevels
 independently of other ranges (see Figure \ref{fig:compaction_schema}).
 
+\subsection{LSM-tree based table structure}
+In LSM-tree based table each index is an LSM-tree, sorted by the index parts.
+It is common pattern, that a table has one primary index and a number of
+secondary indexes. A primary index always is unique, and stores full tuples,
+including all indexed and not indexed fields, as they were inserted by an user.
+A secondary index stores only its own key parts and primary index parts to save
+memory. Such indexes are called non-covering. Primary parts are used as link to
+a full tuple in a primary index, when a search uses a secondary index only.
+
+The described pattern is not unique feature of LSM-tree based tables. For
+example, SQLite secondary indexes based on B-tree are not covering by default
+too. And each SQLite table has unique primary index even if an user did not
+specified it explicitly.
+
+Since secondary indexes stores primary index parts, they are linked with primary
+indexes. And if a tuple does not exist in a primary index, the same tuple can
+not exist in a secondary index. This is the reason, why hidden reads are
+indispensible - if a tuple is replaced with another secondary key or deleted
+from a primary index, then its old version must be deleted from each secondary
+index by old secondary key, else a table indexes are not consistent.
+
+\subsection{Multiple indexes update problem}
+LSM-tree ability to manage multiple versions of a key allows to avoid hidden
+reads on such operations as replace or delete which can not break consistency if
+there is only a primary index in a table and no foreign key constraints.
+Such operations are known as \textbf{blind-writes} \cite{kai:slimdb}.
+Blind-writes are much faster than non-blind insert or update operations, which
+read an old tuple in a worst case from a disk to check for duplicate or apply
+update operations.
+
+The big problem of LSM-tree based tables is that in presense of secondary
+indexes all writes become non-blind. See Figure \ref{fig:inconsistent_example}
+for example of inconsistency if replace is blind and a table has secondary
+index. Here a table is defined with 4 columns: first is part of a primary index,
+2 and 3 are parts of a secondary index, and 4 is not indexed.
+\textit{Replace\{1, 5, 6, 7\}} before executed must read old tuple from a
+primary index by the key \textit{\{1\}}, extract the secondary key
+\textit{\{2, 3\}}, delete it from the secondary index, and only then insert the
+new tuple. If the old tuple is not deleted, then during compaction it becames
+garbage with no link to a full tuple in the primary index.
+\begin{figure}
+\centering
+\includegraphics[width=0.3\textwidth]{inconsistent_example}
+\caption{LSM-tree based table inconsistency example}
+\label{fig:inconsistent_example}
+\end{figure}
+
+Since disk access is much slower than memory access, secondary index presence
+destroys LSM-tree versions advantage. In the next section a new LSM-tree update
+algorithm is presented reviving versions and blind-writes.
+
 \subsection{Math Equations}
 You may want to display math equations in three distinct styles:
 inline, numbered or non-numbered display.  Each of
