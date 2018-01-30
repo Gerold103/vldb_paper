@@ -351,12 +351,68 @@ Since disk access is much slower than memory access, secondary index presence
 destroys LSM-tree versions advantage. In the next section a new LSM-tree update
 algorithm is presented reviving versions and blind-writes.
 
-\subsection{Math Equations}
-You may want to display math equations in three distinct styles:
-inline, numbered or non-numbered display.  Each of
-the three are discussed in the next sections.
+\section{Design and implementation}
+Below the basics of a new algorithm are described, followed by three sections,
+each of which unfolds one of enclosed part of the algorithm.
 
-\subsubsection{Inline (In-text) Equations}
+The key idea of the algorithm is that deletion of old data can be deferred until
+primary index compaction stage. It allows to do not hidden reads during replace
+and delete by primary key operations since they use hidden reads only to learn
+and delete old secondary key versions, not to check consistency. It works on
+tables with non-unique secondary indexes only, because it is impossible to break
+consistency of non-unique secondary index using delete or replace operations.
+
+Obviously, it is not true if there are unique secondary index. For example,
+consider a table with columns \textit{\{a, b\}}, unique primary index on
+\textit{\{a\}} and unique secondary index on \textit{\{b\}}. A table contains
+two records: \textit{\{1, 1\}} and \textit{\{2, 2\}}. It is impossible now to do
+replace \textit{\{1, 2\}}, because it leads to duplicate in the secondary index.
+
+Of course, in MySQL, for example, replace would delete both old records, but
+such kind of replace can not be deferred because during the primary index
+compaction there is no way to learn that a new tuple with one primary key
+discards an old tuple with another primary key without explicitly inserted
+deletion. This multi-replace must delete old records with another primary keys,
+and it is not considered under the paper.
+
+The algorithm of deferred update consists of three parts:
+\begin{enumerate}
+\item Update of a zero-level of all indexes. This is where replace and delete by
+a primary key are inserted into memory and makes secondary and primary indexes
+mal-sinchronized.
+\item Compaction, which differs in primary and secondary indexes. A primary
+index during compaction detects tuples to discard and sends them to a secondary
+indexes as a new LSM-tree sublevel. A secondary index on compaction takes into
+account sublevels received from a primary index.
+\item Secondary index reading, that now can see tuples already deleted from a
+primary index. Existance of a concrete version of a key read from a secondary
+index must be check via primary index lookup.
+\end{enumerate}
+
+\subsection{Deferred update}
+
+Only two operations can be deferred: replace and delete by a primary key. At
+first algorithm of replace exection is presented, and then the delete's one
+which is very similar.
+
+Consider a table with one primary index and some non-unique secondary indexes.
+Assume an user executes replace. The tuple specified in the replace is inserted
+into each indexe's memory level as is, with no preliminary reading and deletion
+of an old tuple from secondary indexes.
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{table_after_deferred_update}
+\caption{LSM-tree based table if update is deferred}
+\label{fig:table_after_deferred_update}
+\end{figure}
+
+When this algorithm is used, it is possible and valid, that some secondary
+indexes consider discarded tuples as not discarded, like in example on Figure
+\ref{fig:table_after_deferred_update}. In the example there is a tuple with
+version 3, which is discarded in a primary index by a newer tuple with the same
+key and version 5. But secondary keys of these tuples are different, and a
+secondary index sees the tuple with version 3 as a separate non-discarded tuple.
+
 A formula that appears in the running text is called an
 inline or in-text formula.  It is produced by the
 \textbf{math} environment, which can be
