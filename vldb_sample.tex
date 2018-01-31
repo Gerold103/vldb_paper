@@ -390,9 +390,8 @@ index must be check via primary index lookup.
 \end{enumerate}
 
 \subsection{Deferred update}
-
 Only two operations can be deferred: replace and delete by a primary key. At
-first algorithm of replace exection is presented, and then the delete's one
+first algorithm of replace execution is presented, and then the delete's one
 which is very similar.
 
 Consider a table with one primary index and some non-unique secondary indexes.
@@ -412,38 +411,70 @@ indexes consider discarded tuples as not discarded, like in example on Figure
 version 3, which is discarded in a primary index by a newer tuple with the same
 key and version 5. But secondary keys of these tuples are different, and a
 secondary index sees the tuple with version 3 as a separate non-discarded tuple.
+Such tuples, visible in a secondary index and is not visible in a primary one
+are called \textbf{dirty}.
 
-A formula that appears in the running text is called an
-inline or in-text formula.  It is produced by the
-\textbf{math} environment, which can be
-invoked with the usual \texttt{{\char'134}begin. . .{\char'134}end}
-construction or with the short form \texttt{\$. . .\$}. You
-can use any of the symbols and structures,
-from $\alpha$ to $\omega$, available in
-\LaTeX\cite{Lamport:LaTeX}; this section will simply show a
-few examples of in-text equations in context. Notice how
-this equation: \begin{math}\lim_{n\rightarrow \infty}x=0\end{math},
-set here in in-line math style, looks slightly different when
-set in display style.  (See next section).
+A delete by a primary key is inserted only in a primary index memory. It can not
+be inserted in a secondary index, because a corresponding secondary key is
+unknown with no hidden reads. In such a case a tuple, discarded by the delete,
+becomes dirty in each secondary index.
 
-\subsubsection{Display Equations}
-A numbered display equation -- one set off by vertical space
-from the text and centered horizontally -- is produced
-by the \textbf{equation} environment. An unnumbered display
-equation is produced by the \textbf{displaymath} environment.
+In the next section the algorithm of deletion of dirty tuples is presented as a
+part of new LSM-tree compaction procedure.
 
-Again, in either environment, you can use any of the symbols
-and structures available in \LaTeX; this section will just
-give a couple of examples of display equations in context.
-First, consider the equation, shown as an inline equation above:
-\begin{equation}\lim_{n\rightarrow \infty}x=0\end{equation}
-Notice how it is formatted somewhat differently in
-the \textbf{displaymath}
-environment.  Now, we'll enter an unnumbered equation:
-\begin{displaymath}\sum_{i=0}^{\infty} x + 1\end{displaymath}
-and follow it with another numbered equation:
-\begin{equation}\sum_{i=0}^{\infty}x_i=\int_{0}^{\pi+2} f\end{equation}
-just to demonstrate \LaTeX's able handling of numbering.
+\subsection{Compaction}
+Compaction is triggered by the same signals, as in the classic LSM-tree - by
+too big number of sublevels, or too big difference in neighbour levels size.
+
+Consider the basic compaction, when there are no deferred updates and dirty
+tuples. Assume the levels consist of sublevels belong to key ranges, and a
+sublevel is sorted array of versioned keys.
+
+Sublevels are compacted in merge-sorting procedure discarding tuples having
+newer versions among compacting sublevels. That is if a tuple has newer version
+out of compaction participants, then it is not discarded. Two tuples are
+considered to be verions of the same key, if they are equal by parts of
+compacting LSM-tree index. If compaction participants have several versions of a
+key then during merge-sort they met during one of merge-steps, and only one
+tuple stays. After merge-sort is finished, a new single sublevel replaces old
+ones.
+
+Obviously, old tuples are read from disk during compaction. And these reads
+replace hidden reads of update operations. Actually, the hidden reads are
+deferred until compaction, where they are done anyway and sequentialy -
+sequential read is at a far quicker than random both on SSD and HDD.
+
+Old tuples going to be discarded are used to extract dirty secondary keys.
+Extracted keys are resorted into order of a secondary index, and are written as
+a new sublevel directly into the secondary index. Secondary keys are written as
+deletes saving the version of the original tuple. New primary index compaction
+produces subleves for itself and for each secondary index. When a secondary
+index compacting, it takes into account sublevels, created for it by a primary
+index.
+
+Resorting into order of a secondary index is executed to observe LSM-tree
+indexe's invariant whereby sublevel of an index is an array tuples sorted by key
+parts of the index. So sublevels, created for secondary indexes during primary
+one's compaction, must be resorted into secondary index order. Resorting method
+depends on implementation, and can be
+\begin{itemize}
+\item in-memory quick sort after all tuples are read from disk;
+\item in-memory tree-sort, when for each index a tree is created before
+compaction and it is filled just as tuples are reading from disk. Tree can be of
+any type: binary, red-black, B-tree. When a primary compaction is finished, the
+tree is written into a secondary index sublevel as a sorted array. So such a
+tree is prefered, which can be iterated fast over all keys (B-plus-tree for
+example - it maintains sorted list of stored values);
+\item disk merge-sort, which can be used when sublevels compaction discard too
+many tuples and there are many secondary indexes - they may no fit into memory.
+The idea is to do in-memory sort of discarded tuples by batches of some fixed
+size, and dump them as sorted arrays into temporary files. When the primary
+compaction is finished, the congested temporary sorted arrays are merge sorted
+into single sublevel intended for a secondary index. Merge-sort of temporary
+files is executed in the same way as sublevels compaction - read and write files
+in parts with no reading them all into memory. The described procedure is
+executed for each secondary index.
+\end{itemize}
 
 \subsection{Citations}
 Citations to articles \cite{bowman:reasoning, clark:pct, braams:babel, herlihy:methodology},
