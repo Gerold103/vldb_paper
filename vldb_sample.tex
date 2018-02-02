@@ -362,7 +362,7 @@ and delete old secondary key versions, not to check consistency. It works on
 tables with non-unique secondary indexes only, because it is impossible to break
 consistency of non-unique secondary index using delete or replace operations.
 
-Obviously, it is not true if there are unique secondary index. For example,
+Obviously, it is not true if there are unique secondary indexes. For example,
 consider a table with columns \textit{\{a, b\}}, unique primary index on
 \textit{\{a\}} and unique secondary index on \textit{\{b\}}. A table contains
 two records: \textit{\{1, 1\}} and \textit{\{2, 2\}}. It is impossible now to do
@@ -375,11 +375,11 @@ discards an old tuple with another primary key without explicitly inserted
 deletion. This multi-replace must delete old records with another primary keys,
 and it is not considered under the paper.
 
-The algorithm of deferred update consists of three parts:
+The algorithm of deferred update consists of three enclosed parts:
 \begin{enumerate}
 \item Update of a zero-level of all indexes. This is where replace and delete by
 a primary key are inserted into memory and makes secondary and primary indexes
-mal-sinchronized.
+mal-synchronized.
 \item Compaction, which differs in primary and secondary indexes. A primary
 index during compaction detects tuples to discard and sends them to a secondary
 indexes as a new LSM-tree sublevel. A secondary index on compaction takes into
@@ -395,7 +395,7 @@ first algorithm of replace execution is presented, and then the delete's one
 which is very similar.
 
 Consider a table with one primary index and some non-unique secondary indexes.
-Assume an user executes replace. The tuple specified in the replace is inserted
+Assume an user executes replace. A tuple specified in the replace is inserted
 into each indexe's memory level as is, with no preliminary reading and deletion
 of an old tuple from secondary indexes.
 \begin{figure}
@@ -411,8 +411,8 @@ indexes consider discarded tuples as not discarded, like in example on Figure
 version 3, which is discarded in a primary index by a newer tuple with the same
 key and version 5. But secondary keys of these tuples are different, and a
 secondary index sees the tuple with version 3 as a separate non-discarded tuple.
-Such tuples, visible in a secondary index and is not visible in a primary one
-are called \textbf{dirty}.
+Such tuples, visible in a secondary index and not visible in a primary one are
+called \textbf{dirty}.
 
 A delete by a primary key is inserted only in a primary index memory. It can not
 be inserted in a secondary index, because a corresponding secondary key is
@@ -423,6 +423,8 @@ In the next section the algorithm of deletion of dirty tuples is presented as a
 part of new LSM-tree compaction procedure.
 
 \subsection{Compaction}
+\subsubsection{Primary index}
+
 Compaction is triggered by the same signals, as in the classic LSM-tree - by
 too big number of sublevels, or too big difference in neighbour levels size.
 
@@ -431,7 +433,7 @@ tuples. Assume the levels consist of sublevels belong to key ranges, and a
 sublevel is sorted array of versioned keys.
 
 Sublevels are compacted in merge-sorting procedure discarding tuples having
-newer versions among compacting sublevels. That is if a tuple has newer version
+older versions among compacting sublevels. That is if a tuple has newer version
 out of compaction participants, then it is not discarded. Two tuples are
 considered to be verions of the same key, if they are equal by parts of
 compacting LSM-tree index. If compaction participants have several versions of a
@@ -475,6 +477,62 @@ files is executed in the same way as sublevels compaction - read and write files
 in parts with no reading them all into memory. The described procedure is
 executed for each secondary index.
 \end{itemize}
+
+\subsubsection{Secondary index}
+
+Compaction procedure of a secondary index is slightly changed to correctly
+process the deletes received from a primary index. The point is that the
+deletes, received from a primary index, have both the same version and the same
+key as the dirty tuples, for which they are intended, and a compaction procedure
+must correctly process these versions and keys match.
+
+The only modification of a secondary index compaction is that in a case of
+versions and keys match of delete and replace tuples the replace tuple must be
+discarded, and the delete tuple must stay, if it is not \textbf{major}
+compaction. A compaction is major, if all sublevels of all levels are compacted.
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{secondary_compaction_example}
+\caption{Secondary index compaction example}
+\label{fig:secondary_compaction_example}
+\end{figure}
+On the Figure \ref{fig:secondary_compaction_example} it is presented example of
+a secondary index compaction with sublevel, received from a primary index.
+In the example, a primary and secondary indexes stores two tuples:
+\textit{\{pk1, sk1\}} and \textit{\{pk1, sk2\}}. In a primary index it is the
+different versions of the key \textit{pk1}. When a primary index is compacted,
+a tuple \textit{\{pk1, sk1\}} is discarded and sent to a secondary index as a
+DELETE tuple with the same version. During a secondary index compaction this
+DELETE \textit{\{pk1, sk1\}} with version 1 mets the dirty tuple
+\textit{\{pk1, sk1\}} with version 1 - their keys and versions are equal. It is
+assumed, that it is not major compaction, so the tuple \textit{\{pk1, sk1\}} is
+discarded and the DELETE tuple stays.
+
+\subsection{Read}
+
+Read of a primary index is not changed, because dirty tuples can appear in
+secondary indexes only. When a secondary index is read, the dirty tuples are
+skipped. To check a tuple if it is dirty, its primary key and version are looked
+up in a primary index. If a primary index contains the same key with the same
+version, then the tuple is not dirty and can be returned to an user.
+
+It means, that even point reading from a secondary index can lead to multiple
+lookups in a primary index to exclude dirty tuples.
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{secondary_reading_example}
+\caption{Secondary index read example}
+\label{fig:secondary_reading_example}
+\end{figure}
+On the Figure \ref{fig:secondary_reading_example} a SELECT by a secondary key
+returns a tuple on a third attempt. At first, it reads \textit{\{pk1, sk1\}} as
+the newest known version of this secondary key. It appers to be dirty, because
+in a primary index a tuple with the same primary key has another version and
+another secondary key. At second \textit{\{pk2, sk1\}} is checked as the next
+by version: it is dirty too - in the primary index this tuple is already
+replaced by \textit{\{pk2, sk2\}}. At third \textit{\{pk3, sk1\}} is checked,
+and in the primary index a tuple is found with the same key and the same
+version - it means, that this tuple is not dirty and can be returned to an user.
 
 \subsection{Citations}
 Citations to articles \cite{bowman:reasoning, clark:pct, braams:babel, herlihy:methodology},
