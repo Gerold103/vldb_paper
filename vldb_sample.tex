@@ -549,8 +549,8 @@ Vinyl engine stores indexes as LSM-trees. LSM-tree based index is split into key
 ranges. LSM-tree level consists of sublevels, produced by zero-level dump and
 compactions. Sublevels are files. Ranges are compacted independently of each
 other. Dump and compaction are executed in background threads, while transaction
-processing is in single main thread and it does not heavy operations like disk
-or network access.
+processing is in a single main thread and it does not heavy operations like disk
+or network access - it delegates these tasks to worker threads.
 
 Main thread consists of coroutins written in C and called \textit{fibers}. When
 a main thread wants to do long operation like LSM-tree index dump or compaction,
@@ -562,31 +562,38 @@ inter-thread communication queues.
 Implementation of the deferred update algorithm consists of three parts like the
 algorithm itself: new replace and delete execution, compaction and read.
 
-New replace/delete are quire simple: they simply do not hidden reads. Replace is
+New replace/delete are quire simple: they just do not hidden reads. Replace is
 inserted in zero-levels of all indexes of Vinyl space, delete is inserted into a
 primary one only.
 
-The compaction implementation is the most complex part of the patch. As applied
-to Vinyl and LSM-trees, the compaction procedure works as follows before the
-deferred update implementation:
+The compaction is the most complex part of the implementation. As applied to
+Vinyl and LSM-trees, the compaction procedure works as follows before the
+deferred update:
 \begin{enumerate}
-\item Main thread detects that a compaction is needed (for example, level size
-ratio is violated or a level consists of too many sublevels), and sends a
+\item Main thread detects that a compaction is necessary (for example, level
+size ratio is violated or a level consists of too many sublevels), and sends a
 request to a worker thread with information, which sublevels need to compact, in
 which files they are stored;
 \item Worker thread sees request and starts compaction. Compaction is executed
 using merge-sort of sublevels files. Processed files are not deleted or changed
 by a worker thread, because they may be used now in the main thread for reads.
-When the worker has finished work, it has one new sublevel file. The main thread
-is notified, that the work is done;
+When the worker has finished the work, it has one new sublevel file. The main
+thread is notified, that the work is done;
 \item After a while, one of fibers of the main thread sees the finished worker,
 gets the new sublevel, puts it in the LSM-tree and deletes old sublevels and
-their files in one transaction.
+their files atomically.
 \end{enumerate}
 
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{compaction_implementation}
+\caption{Primary index compaction schema}
+\label{fig:compaction_implementation}
+\end{figure}
 After the deferred update is applied, the compaction procedure's second step is
-completely different. When a primary index is scheduled for compaction, the main
-thread sends to a worker info not only about a primary indexe's sublevel, but
+completely different. See Figure \ref{fig:compaction_implementation} as
+illustration. When a primary index is scheduled for compaction, the main thread
+sends to a worker info not only about a primary indexe's sublevel, but
 about each secondary index key parts. They are needed to extract secondary keys
 from primary index tuples.
 
@@ -594,16 +601,17 @@ While the primary index is being merge-sorted, discarded tuples are stored into
 in-memory B-plus-trees created for each secondary index. When a primary index
 compaction is finished and a new sublevel is created, the filled B-plus-trees
 are dumped into sublevel files for secondary indexes. The dump is fast, because
-B-plus-tree can be fast iterated due to links between sequential keys. At this
+B-plus-tree can be fast iterated due to links between neighbour keys. At this
 step the worker thread has sublevel files for each index of the table, and it
-notifies the main thread about finished work.
+notifies the main thread about the finished work.
 
 One of the main thread's fiber replaces compacted sublevels with new one in a
 primary index, and puts secondary indexe's sublevels into corresponding indexes
 at the LSM-tree's first level. Secondary index sublevel received from a primary
 index is on the LSM-tree's first level, because it can contain any DELETEs from
-first to last primary index levels. And these DELETEs must be on higher level,
-then dirty tuples for which they are intended.
+first to last primary index levels and it means, that it can overlap any
+sublevel stored on disk. These DELETEs must overlap dirty tuples for which
+intended.
 
 \subsection{Citations}
 Citations to articles \cite{bowman:reasoning, clark:pct, braams:babel, herlihy:methodology},
