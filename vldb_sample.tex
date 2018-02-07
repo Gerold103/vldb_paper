@@ -465,8 +465,9 @@ depends on implementation, and can be
 compaction and it is filled just as tuples are reading from disk. Tree can be of
 any type: binary, red-black, B-tree. When a primary compaction is finished, the
 tree is written into a secondary index sublevel as a sorted array. So such a
-tree is prefered, which can be iterated fast over all keys (B-plus-tree for
-example - it maintains sorted list of stored values);
+tree is prefered, which can be iterated fast over all keys
+(B\textsuperscript{+}-tree for example - it maintains sorted list of stored
+values);
 \item disk merge-sort, which can be used when sublevels compaction discard too
 many tuples and there are many secondary indexes - they may no fit into memory.
 The idea is to do in-memory sort of discarded tuples by batches of some fixed
@@ -543,7 +544,7 @@ The developed algorithm is implemented as a patch for Tarantool database's disk
 engine named Vinyl. Tarantool is DBMS and application server, which supports two
 storage engines: Memtx in memory and Vinyl on disk. Tables in Tarantool are
 being called \textit{spaces}. Memtx engine stores data in memory in
-B-plus-trees, and it is not considered here.
+B\textsuperscript{+}-trees, and it is not considered here.
 
 Vinyl engine stores indexes as LSM-trees. LSM-tree based index is split into key
 ranges. LSM-tree level consists of sublevels, produced by zero-level dump and
@@ -590,22 +591,23 @@ their files atomically.
 \caption{Primary index compaction schema}
 \label{fig:compaction_implementation}
 \end{figure}
-After the deferred update is applied, the compaction procedure's second step is
-completely different. See Figure \ref{fig:compaction_implementation} as
-illustration. When a primary index is scheduled for compaction, the main thread
-sends to a worker info not only about a primary indexe's sublevel, but
-about each secondary index key parts. They are needed to extract secondary keys
-from primary index tuples.
+After the deferred update is applied, the compaction procedure's second and
+third steps are completely different. See Figure
+\ref{fig:compaction_implementation} as illustration. When a primary index is
+scheduled for compaction, the main thread sends to a worker info not only about
+a primary indexe's sublevel, but about each secondary index key parts. They are
+needed to extract secondary keys from primary index tuples.
 
 While the primary index is being merge-sorted, discarded tuples are stored into
-in-memory B-plus-trees created for each secondary index. When a primary index
-compaction is finished and a new sublevel is created, the filled B-plus-trees
-are dumped into sublevel files for secondary indexes. The dump is fast, because
-B-plus-tree can be fast iterated due to links between neighbour keys. At this
-step the worker thread has sublevel files for each index of the table, and it
-notifies the main thread about the finished work.
+in-memory B\textsuperscript{+}-trees created for each secondary index. When a
+primary index compaction is finished and a new sublevel is created, the filled
+B\textsuperscript{+}-trees are dumped into sublevel files for secondary indexes.
+The dump is fast, because B\textsuperscript{+}-tree can be fast iterated due to
+links between neighbour keys. At this step the worker thread has sublevel files
+for each index of the table, and it notifies the main thread about the finished
+work.
 
-One of the main thread's fiber replaces compacted sublevels with new one in a
+One of the main thread's fiber replaces compacted sublevels with a new one in a
 primary index, and puts secondary indexe's sublevels into corresponding indexes
 at the LSM-tree's first level. Secondary index sublevel received from a primary
 index is on the LSM-tree's first level, because it can contain any DELETEs from
@@ -613,32 +615,123 @@ first to last primary index levels and it means, that it can overlap any
 sublevel stored on disk. These DELETEs must overlap dirty tuples for which
 intended.
 
-\subsection{Citations}
-Citations to articles \cite{bowman:reasoning, clark:pct, braams:babel, herlihy:methodology},
-conference
-proceedings \cite{clark:pct} or books \cite{salas:calculus, Lamport:LaTeX} listed
-in the Bibliography section of your
-article will occur throughout the text of your article.
-You should use BibTeX to automatically produce this bibliography;
-you simply need to insert one of several citation commands with
-a key of the item cited in the proper location in
-the \texttt{.tex} file \cite{Lamport:LaTeX}.
-The key is a short reference you invent to uniquely
-identify each work; in this sample document, the key is
-the first author's surname and a
-word from the title.  This identifying key is included
-with each item in the \texttt{.bib} file for your article.
+Implementation of reading is changed to take into account dirty tuples
+existence. There is the same point that during a secondary index compaction -
+the index contains both dirty tuples and their DELETEs with the same key and
+version. If an iterator sees this match, it skips these versions and all olders.
+All other found tuples are looked up in a primary index. If in the primary index
+the tuple is found with the same secondary key and version, as the tuple from
+the secondary index, then this tuple is not dirty and can be returned to an
+user. Else the tuple is dirty - its DELETE while is not generated by primary
+index compaction. The salient feature of this implementation that sublevels,
+received from a primary index, are undistinguishable from usual sublevels, and
+they are beeing read together with others. It allows to avoid lookup in a
+primary index, if a tuple is dirty and its DELETE already is in the secondary
+index. But there is overhead for reading these additional sublevels.
 
-The details of the construction of the \texttt{.bib} file
-are beyond the scope of this sample document, but more
-information can be found in the \textit{Author's Guide},
-and exhaustive details in the \textit{\LaTeX\ User's
-Guide}\cite{Lamport:LaTeX}.
+There is another way to implement reading, which has its own benefits and
+drawbacks. The key concept is to distinguish sublevels received from a primary
+index from others and use them for compaction only, not for reading. It allows
+to read less sublevel files, but compels to do lookups in a primary index on
+each tuple even if the dirty tuple's DELETE is already received from the primary
+index.
 
-This article shows only the plainest form
-of the citation command, using \texttt{{\char'134}cite}.
-This is what is stipulated in the SIGS style specifications.
-No other citation format is endorsed.
+\section{Mathematical basics}
+
+In this section the mathematical complexity of original update algorithm is
+compared against the deferred one's. There are used the following known values:
+\begin{align*}
+N &- \text{tuples number on all levels}, \\
+b &- \text{zero-level B\textsuperscript{+}-tree branching factor}, \\
+r &- \text{level size ratio}, \\
+K &- \text{total indexes number}.
+\end{align*}
+
+According to LSM-tree level size ratio definition, level $i$ is $r$ times
+bigger, than $i - 1$, so total count of levels is $O(log_rN)$
+\cite{kai:slimdb}. Lets denote it as $lc$.
+
+Deferred update algorithm allows to do not reads, but it puts new tuples in
+memory level, and it is the only common part of old and new algorithms. Memory
+level access complexity depends on tuples number, which can be calculated from
+$N$ and levels number. Denoting memory (alias zero) level size as $m$, calculate
+it via geometrical progression sum formula:
+\begin{gather*}
+N = m + m*r + m*r^2 + ... + m*r^{lc}, \\
+N = \frac{m(1 - r^{lc+1})}{1 - lc}, \\
+m = \frac{N(1 - r)}{1 - r^{lc + 1}}.
+\end{gather*}
+
+In the scope of the paper, memory level is B\textsuperscript{+}-tree, in which
+search and insertion complexity is $O(log_bm)$.
+Total complexity of replace and delete before deferred update includes point
+search on disk - complexity of this operation is $O(log_rN)$. It is associated
+with levels number because disk index of levels (pages, their minimal and
+maximal keys, versions) is stored in memory and needed pages on a disk for a
+certain key can be found with no disk access. Disk is accessed only to read
+pages, which can contain a sought key.
+
+Using found parameters, the complexity of update can be calculated:
+
+\underline{Complexity of replace}:
+\begin{displaymath}
+O(log_bm) + O(log_r(N - m)) + O(log_bm) * (2K - 1)
+\end{displaymath}
+Do hidden read: scan for an old tuple in memory level ($O(log_bm)$), on
+disk ($O(log_r(N - m))$). In the worst case an old tuple with the same primary
+key is found, so insert into memory level ($O(log_bm)$) of each secondary index
+two tuples ($2(K - 1)$): DELETE of the old one and the new tuple. In the primary
+index the new tuple discards the old one without DELETE, so in the primary
+index only one tuple is inserted ($2(K - 1) + 1 = 2K - 1$).
+
+\underline{Complexity of delete}:
+\begin{displaymath}
+O(log_bm) + O(log_r(N - m)) + O(log_bm) * K
+\end{displaymath}
+Do hidden read: scan for an old tuple in the primary index disk and memory
+($O(log_bm) + O(log_r(N - m))$). In the worst case an old tuple is found -
+insert into memory level of each index DELETE tuple ($O(log_bm) * K$).
+
+After the deferred update is implemented all hidden reads disappears.
+
+\underline{Complexity of \textbf{deferred} replace}:
+\begin{displaymath}
+O(log_bm) * K
+\end{displaymath}
+Simply insert a new tuple into memory levels of all indexes - no DELETEs, no
+hidden reads. They are deferred until compaction. The deferred replace is at
+least twice faster than classical according to the calculations below:
+\begin{gather*}
+\frac{O(log_bm) + O(log_r(N - m)) + O(log_bm) * (2K - 1)}{O(log_bm) * K} = \\
+\frac{O(log_bm * 2K) + O(log_r(N - m))}{O(log_bm) * K} = \\
+2 + \frac{O(log_r(N - m))}{O(log_bm) * K}.
+\end{gather*}
+LSM-trees zero level size is bounded above by RAM size, indexes number is set
+once when a database schema is created and is changed rare, zero-level
+B\textsuperscript{+}-tree's branching factor is constant, so the nominator
+$O(log_bm) * K$ can be treatted as constant. Denominator contains $N$, which
+in write-intensive tasks can be huge (billions and more) and the bigger it is
+the bigger is the difference between speed of deferred and simple update.
+For example, for the following estimation:
+\begin{align*}
+&r = 3, \\
+&b = 10, \\
+&m = 10^5, \\
+&N = 10^8, \\
+&K = 5.
+\end{align*}
+the deferred replace is faster in $~2.55$ times in theory. In the reality the
+speed growth is much and much greater, because access to disk is much slower
+than access to memory even for SSD. And exectly on disk speed depends the
+denominator $O(log_r(N - m))$ - when $N$ is big, most of tuples are stored on
+disk. It is because it is easy to get speed growth up to 10 times even on small
+tables.
+
+\underline{Complexity of \textbf{deferred} delete}:
+\begin{displaymath}
+O(log_bm)
+\end{displaymath}
+Insert DELETE into primary indexe's memory level only.
 
 \subsection{Tables}
 Because tables cannot be split across pages, the best
