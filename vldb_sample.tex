@@ -692,7 +692,7 @@ Do hidden read: scan for an old tuple in the primary index disk and memory
 ($O(log_bm) + O(log_r(N - m))$). In the worst case an old tuple is found -
 insert into memory level of each index DELETE tuple ($O(log_bm) * K$).
 
-After the deferred update is implemented all hidden reads disappears.
+After the deferred update is implemented all hidden reads disappear.
 
 \underline{Complexity of \textbf{deferred} replace}:
 \begin{displaymath}
@@ -700,7 +700,7 @@ O(log_bm) * K
 \end{displaymath}
 Simply insert a new tuple into memory levels of all indexes - no DELETEs, no
 hidden reads. They are deferred until compaction. The deferred replace is at
-least twice faster than classical according to the calculations below:
+least twice faster than classical one according to the calculations below:
 \begin{gather*}
 \frac{O(log_bm) + O(log_r(N - m)) + O(log_bm) * (2K - 1)}{O(log_bm) * K} = \\
 \frac{O(log_bm * 2K) + O(log_r(N - m))}{O(log_bm) * K} = \\
@@ -722,7 +722,7 @@ For example, for the following estimation:
 \end{align*}
 the deferred replace is faster in $~2.55$ times in theory. In the reality the
 speed growth is much and much greater, because access to disk is much slower
-than access to memory even for SSD. And exectly on disk speed depends the
+than access to memory even for SSD. And exactly on disk speed depends the
 denominator $O(log_r(N - m))$ - when $N$ is big, most of tuples are stored on
 disk. It is because it is easy to get speed growth up to 10 times even on small
 tables.
@@ -731,7 +731,35 @@ tables.
 \begin{displaymath}
 O(log_bm)
 \end{displaymath}
-Insert DELETE into primary indexe's memory level only.
+Insert DELETE into primary indexe's memory level only. Because only primary
+index is used, the deferred delete is faster than the simple in at least $K + 1$
+times, and the more tuples are on disk, the faster deferred delete is:
+\begin{gather*}
+\frac{O(log_bm) + O(log_r(N-m)) + O(log_bm) * K}{O(log_bm)} = \\
+\frac{O(log_bm)*(K + 1) + O(log_r(N-m))}{O(log_bm)} = \\
+K + 1 + \frac{O(log_r(N-m))}{O(log_bm)}
+\end{gather*}
+
+\section{Evaluation}
+
+\section{Related work}
+Necessity to speed updates up is not a new task. There are some existing works
+on this theme: some of them try to reduce hidden reads number, another try to
+defer some computations until reads. Various decisions are developed not for
+LSM-trees only for for B-trees too.
+
+The problem of too long updates appeared earlier than SSD disks, when B-trees
+was the very widespread data structure for HDDs. In the work
+\cite{Edward:incremental_update} authors propose a method of deferring updates
+of B-tree until updated keys are read. Updates are stored in
+\textit{differential files}, which are used firtly to lookup each key.
+Differential files were first proposed in 1976 \cite{Lohman:differential_files}
+as a method of B-tree multiversion support. It is curious that LSM-tree
+investigated much later actually completely consists of differential files.
+Differential files allowed to store multiple versions, but they could not reduce
+cost of random read-writes in B-trees.
+
+
 
 \subsection{Tables}
 Because tables cannot be split across pages, the best
