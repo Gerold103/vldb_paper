@@ -782,7 +782,21 @@ create not unique index on test(field5);
 \centering
 \includegraphics[width=0.46\textwidth]{rps_microbench}
 \caption{Microbenchmark RPS}
-\label{fig:microbench}
+\label{fig:rps_microbench}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{disk_stmt_microbench}
+\caption{Microbenchmark disk statement number}
+\label{fig:disk_stmt_microbench}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{dump_count_microbench}
+\caption{Microbenchmark dump number}
+\label{fig:dump_count_microbench}
 \end{figure}
 
 LSM-tree's zero-level size is restricted with 128Mb. Workload is generated and
@@ -797,9 +811,16 @@ There are two worker threads to dump and compact levels. Level size ratio is
 3.5, maximal sublevels count on a level is 2, bloom filter has 5\% false
 positive rate, page size is 8Kb (about 160 tuples capacity).
 
-The results are on Figure \ref{fig:microbench}.
+The request-per-second (RPS) results are on Figure \ref{fig:rps_microbench}.
 
-There are some aggregated characteristics in Table \ref{table:rps_microbench}.
+There are some aggregated RPS values in Table \ref{table:rps_microbench}.
+According to values in the table, on such a little table with less than 1000000
+tuples RPS growths in 6 times.
+
+Because of much bigger RPS, the table is filled faster, as shown on Figure
+\ref{fig:disk_stmt_microbench}. And memory level is dumped more frequently, as
+shown on a figure \ref{fig:dump_count_microbench}.
+
 \begin{table}
 \centering
 \caption{Microbenchmark RPS aggregated}
