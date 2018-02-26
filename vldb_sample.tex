@@ -101,7 +101,7 @@ to disk sequentially. It is made possible due to the ability of the LSM tree to 
 versions of the same key - it allows LSM tree-based tables to not read and delete
 old data explicitly from a primary index on such operations as deletion or
 replacement. Old data is deleted by new data during the compaction instead. But
-this advantage is nullifed by secondary indexes, because replace/delete-like
+this advantage is nullified by secondary indexes, because replace/delete-like
 operations require reading and deleting old data from each secondary index explicitly.
 This paper presents an LSM tree modification that allows not reading any indexes
 on replacement/deletion even if there are non-secondary indexes in the table.
@@ -221,7 +221,7 @@ advantage becomes diluted.
 
 With the emergence of solid-state drives (SSDs), the cost of random writes started
 having a much heavier impact on the overall performance than the cost of random reads,
-and nowadays the LSM tree is consideted to be a standard data structure for
+and nowadays the LSM tree is considered to be a standard data structure for
 databases. For example, it is used in LevelDB, RocksDB, Cassandra, Tarantool,
 BigTable, HBase, Riak, MySQL (MyRocks).
 
@@ -240,7 +240,7 @@ primary index.
 
 Reading from a primary index and explicit deletion of old tuples cannot be avoided in the
 classic LSM tree, because it deletes old versions of the key only if they are
-equal by key. If a request changes a secondary key in an exising tuple and
+equal by key. If a request changes a secondary key in an existing tuple and
 does not delete the old one, then it is not deleted from a secondary index.
 As a result, the LSM tree regards the new and the old tuple not as different
 versions of the same key, but as two different keys.
@@ -286,7 +286,7 @@ are considered.
 \end{figure}
 Each level consists of multiple sublevels. Each sublevel is an array sorted by
 key (in case of the LSM tree index, a key consists of index parts) and
-containig a specific range of key values. During the compaction, some sublevels of each
+containing a specific range of key values. During the compaction, some sublevels of each
 level are merge-sorted into a new sorted array. It is known that if one key
 version is on level $i$ and another is on level $j < i$, then the key version on level
 $j$ is newer, so the other one is discarded when compacted.
@@ -299,7 +299,7 @@ the size of level $i$ $*$ the level size ratio. If the maximal sublevels count p
 level is exceeded or the level size ratio is violated, then compaction merges as many
 sublevels as needed to satisfy both limitations.
 
-In practice, sublevels are produced by dumping the memory level and by spliting index
+In practice, sublevels are produced by dumping the memory level and by splitting index
 key values into ranges, where each range stores and maintains its own sublevels
 independently of the other ranges (see Figure \ref{fig:compaction_schema}).
 
@@ -450,7 +450,7 @@ is far quicker than a random one, both on SSDs and HDDs.
 Old tuples that are to be discarded are used to extract dirty secondary keys.
 The extracted keys are sorted into the order of a secondary index and are written as
 a new sublevel directly into it. Secondary keys are written as deletes, saving the
-version of the original tuple. New primary index compaction produces subleves for
+version of the original tuple. New primary index compaction produces sublevels for
 itself and for each secondary index. When a secondary index is being compacted, it takes
 into account sublevels created for it by the primary index.
 
@@ -537,46 +537,45 @@ primary index until a pair with matching versions and keys is found.
 
 \subsection{Implementation}
 
-The developed algorithm is implemented as a patch for Tarantool database's disk
-engine named Vinyl. Tarantool is DBMS and application server, which supports two
-storage engines: Memtx in memory and Vinyl on disk. Tables in Tarantool are
-being called \textit{spaces}. Memtx engine stores data in memory in
-B\textsuperscript{+}-trees, and it is not considered here.
+The proposed algorithm is implemented as a patch for Tarantool's on-disk
+engine named Vinyl. Tarantool is a DBMS and application server that supports two
+storage engines: Memtx (in-memory) and Vinyl (on-disk). Tables in Tarantool are
+called \textit{spaces}. Memtx stores data in RAM using B+ trees and is not
+considered here.
 
-Vinyl engine stores indexes as LSM-trees. LSM-tree based index is split into key
-ranges. LSM-tree level consists of sublevels, produced by zero-level dump and
-compactions. Sublevels are files. Ranges are compacted independently of each
-other. Dump and compaction are executed in background threads, while transaction
-processing is in a single main thread and it does not heavy operations like disk
-or network access - it delegates these tasks to worker threads.
+Vinyl stores indexes as LSM trees. An LSM tree-based index is split into key
+ranges. An LSM tree level consists of sublevels that are produced by level zero dumps and
+compactions and are represented as files. Ranges are compacted independently of each
+other. Dumps and compactions are executed in background threads, while transaction
+processing is handled by a single main thread that does not do any costly operations like disk
+or network access, delegating these tasks to worker threads instead.
 
-Sublevels consists of pages. Page knows its minimal and maximal keys and minimal
-and maximal versions - this information is stored in memory and allows to
-read just needed pages, not entire sublevels. Page size is configurable, and the
-greater it is, the smaller meta info stored in memory and the bigger chunks are
+Sublevels consist of pages. A page knows its minimal and maximal keys and minimal
+and maximal versions - this information is stored in memory and allows reading
+only the needed pages, not entire sublevels. Page size is configurable, and the
+greater it is, the less meta information is stored in memory and the larger chunks are
 read when searching for a key.
 
-Each vinyl sublevel has bloom filter with several improvements: less hashing
-with the same performance \cite{Kirsch:bloom_less_hashing} and blocked bloom
+Each Vinyl sublevel has a Bloom filter with several improvements: less hashing
+with the same performance \cite{Kirsch:bloom_less_hashing} and blocked Bloom
 filters \cite{Putze:bloom_cache_oblivious}.
 
-Main thread consists of coroutins written in C and called \textit{fibers}. When
-a main thread wants to do long operation like LSM-tree index dump or compaction,
-access disk or network, it sends a request to a worker thread and switches to
-another fiber, while the original one waits for response from the worker. The
-big advantage of such schema, that there are no locks on internals except
-inter-thread communication queues.
+The main thread consists of coroutines written in C and called \textit{fibers}. When
+the main thread wants to perform a long operation, such as dumping or compacting
+an LSM tree index, or accessing disk or network, it sends a request to a worker
+thread and switches to another fiber, while the original one waits for a response
+from the worker thread. A huge advantage of this approach is that there are no locks
+on internals, except for inter-thread communication queues.
 
-Implementation of the deferred update algorithm consists of three parts like the
-algorithm itself: new replace and delete execution, compaction and read.
+The implementation of the deferred update algorithm consists of three parts, same as the
+algorithm itself: new replaces/deletes, compaction, and reads.
 
-New replace/delete are quire simple: they just do not hidden reads. Replace is
-inserted in zero-levels of all indexes of Vinyl space, delete is inserted into a
+New replaces/deletes are quite simple: they just do not do any hidden reads. Replace is
+inserted into level zero of all indexes of a Vinyl space, whereas delete is inserted into the
 primary one only.
 
-The compaction is the most complex part of the implementation. As applied to
-Vinyl and LSM-trees, the compaction procedure works as follows before the
-deferred update:
+Compaction is the most complex part of the implementation. As applied to
+Vinyl and LSM trees, it works as follows before the deferred update:
 \begin{enumerate}
 \item Main thread detects that a compaction is necessary (for example, level
 size ratio is violated or a level consists of too many sublevels), and sends a
@@ -615,7 +614,7 @@ for each index of the table, and it notifies the main thread about the finished
 work.
 
 One of the main thread's fiber replaces compacted sublevels with a new one in a
-primary index, and puts secondary indexe's sublevels into corresponding indexes
+primary index, and puts secondary index's sublevels into corresponding indexes
 at the LSM-tree's first level. Secondary index sublevel received from a primary
 index is on the LSM-tree's first level, because it can contain any DELETEs from
 first to last primary index levels and it means, that it can overlap any
@@ -632,7 +631,7 @@ the secondary index, then this tuple is not dirty and can be returned to an
 user. Else the tuple is dirty - its DELETE while is not generated by primary
 index compaction. The salient feature of this implementation that sublevels,
 received from a primary index, are undistinguishable from usual sublevels, and
-they are beeing read together with others. It allows to avoid lookup in a
+they are being read together with others. It allows to avoid lookup in a
 primary index, if a tuple is dirty and its DELETE already is in the secondary
 index. But there is overhead for reading these additional sublevels.
 
@@ -716,7 +715,7 @@ least twice faster than classical one according to the calculations below:
 LSM-trees zero level size is bounded above by RAM size, indexes number is set
 once when a database schema is created and is changed rare, zero-level
 B\textsuperscript{+}-tree's branching factor is constant, so the nominator
-$O(log_bm) * K$ can be treatted as constant. Denominator contains $N$, which
+$O(log_bm) * K$ can be treated as constant. Denominator contains $N$, which
 in write-intensive tasks can be huge (billions and more) and the bigger it is
 the bigger is the difference between speed of deferred and simple update.
 For example, for the following estimation:
@@ -795,7 +794,7 @@ create not unique index on test(field5);
 LSM-tree's zero-level size is restricted with 128Mb. Workload is generated and
 sent via network by 4 clients on the same machine as Tarantool (unix sockets are
 used - overhead of network is minimal). Each client generates replaces and
-deletions by primary key in batches with randmo size 1 to 500 tuples. Half of
+deletions by primary key in batches with random size 1 to 500 tuples. Half of
 tuples are deletions and half are replaces. A tuple consists of 5 fields with
 total size about 50 bytes (including tuple meta info). All keys are between 1
 and 1000000.
@@ -810,9 +809,9 @@ There are some aggregated RPS values in Table \ref{table:rps_microbench}.
 According to values in the table, on such a little table with less than 1000000
 tuples RPS growths in 6 times.
 
-Because of much bigger RPS, the table is filled faster, as shown on Figure
-\ref{fig:disk_stmt_microbench}. And memory level is dumped more frequently, as
-shown on a figure \ref{fig:dump_count_microbench}.
+Because of a much higher number of RPS, the table is filled faster, as shown in Figure
+\ref{fig:disk_stmt_microbench}. And the memory level is dumped more frequently, as
+shown in Figure \ref{fig:dump_count_microbench}.
 
 \begin{table}
 \centering
@@ -841,7 +840,7 @@ The problem of too long updates appeared earlier than SSD disks, when B-trees
 was the very widespread data structure for HDDs. In the work
 \cite{Edward:incremental_update} authors propose a method of deferring updates
 of B-tree until updated keys are read. Updates are stored in
-\textit{differential files}, which are used firtly to lookup each key.
+\textit{differential files}, which are used firtsly to lookup each key.
 Differential files were first proposed in 1976 \cite{Lohman:differential_files}
 as a method of B-tree multiversion support. It is curious that LSM-tree
 investigated much later actually completely consists of differential files.
