@@ -104,7 +104,7 @@ replacement. Old data is deleted by new data during the compaction instead. But
 this advantage is nullified by secondary indexes, because replace/delete-like
 operations require reading and explicitly deleting old data from each secondary index.
 This paper presents an LSM tree modification that allows not reading any indexes
-on replacement/deletion even if there are non-secondary indexes in the table.
+on replacement/deletion even if there are secondary indexes in the table.
 Experimental research of the modified LSM tree shows a 1.5-10-times increase
 in the write speed on tables with 2-4 non-unique secondary indexes, as compared
 with the original LSM tree. Write performance of the new LSM tree grows linearly with
@@ -668,9 +668,10 @@ indexes. The database schema consists of one space on the Vinyl engine, one prim
 index on the first field, and 4 secondary indexes, each on one field. In terms of the
 SQL syntax, it looks as follows:
 \begin{verbatim}
-create table test (field1 unsigned integer primary key, field2 unsigned integer,
-		   field3 unsigned integer, field4 unsigned integer,
-		   field5 unsigned integer);
+create table test
+(field1 unsigned integer primary key,
+ field2 unsigned integer, field3 unsigned integer,
+ field4 unsigned integer, field5 unsigned integer);
 create not unique index on test(field2);
 create not unique index on test(field3);
 create not unique index on test(field4);
@@ -777,6 +778,15 @@ simultaneously. By using custom LevelDB, it was shown that open-channel SSDs
 (SDFs) allow for more than 4 times throughput increase. But this optimization is
 purely hardware, as the LSM tree is not changed at all, so it will not work for
 regular SSDs. However, this method can be combined with deferred updates.
+
+\section{Conclusion}
+
+This paper introduced a new version of the LSM tree that turns replace/delete
+operations into blind writes even if multiple indexes exist. The main idea is to
+defer old data lookup and deletion until compaction, which eliminates hidden
+reads. Several variants of the new compaction algorithm were proposed, and one
+of them was implemented. Exponential speed growth was mathematically proven for
+deferred updates, and the same results were obtained in experiments.
 
 % The following two commands are all you need in the
 % initial runs of your .tex file to
