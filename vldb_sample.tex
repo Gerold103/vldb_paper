@@ -112,102 +112,6 @@ indexes. And the more secondary indexes there are, the faster the new LSM-tree
 works on write operations.
 \end{abstract}
 
-% Abstract
-
-% -- 1. Introduction
-% Краткая история появления LSM-деревьев, предпосылки к этому. Связь с SSD.
-% Примеры БД. Главные преимущества (версионность, последовательность записи).
-% Главный недостаток - скрытые чтения (что это). На чем проявляются
-% (на обновлениях вторичных индексов), на чем нет (только на первичном), почему
-% такие плохие. Сказать, что в данной статье представлен алгоритм, который
-% позволяет не делать скрытых чтений на некоторых операциях по некоторым таблицам.
-% В одно предложение сказать, какой прирост производительности удалось получить.
-
-% -- 2. Background and motivation
-% Более полное определение LSM-дерева. Сказать не чрезмерно подробно, какие в нем
-% ключевые алгоритмы (как пишутся обновления, как делаются чтения). Сказать про
-% ratio размеров уровней.
-% -- 2.1. Compaction
-% Сказать подробно, как делается слияние уровней, если они представлены
-% сортированными массивами (вместо классического варианта, где на диске уровни -
-% это B-деревья). Особо упомянуть, что старые данные дискардятся новыми только в
-% пределах одинаковых ключей.
-% -- 2.2. LSM-tree based index structure
-% Про то, что в LSM-tree based таблицах каждый индекс - это LSM-дерево. Первичный
-% индекс хранит таплы целиком, вторичный не целиком (это просто упомянуть, так как
-% будть индексы хоть covering - это не помогает избавиться от скрытых чтений). Но
-% важно, что вторичный индекс использует первичные ключи как ссылки на таплы в
-% первичном индексе. И LSM-деревья получаются связанными.
-% -- 2.3. Multiple indexes update problem
-% Рассказать, что существуют delete и replace операции, которые на одном индексе
-% не требуют чтений. Но при появлении вторичных индексов они делают скрытые чтения
-% из первичного индекса. В случае replace вторичный ключ может поменяться, и тогда
-% во вторичном индексе новая запись не удалит старую. В случае delete по
-% первичному ключу есть только первичный ключ, и во вторичные индексы вставлять
-% нечего - приходится тоже читать.
-
-% -- 3. Algorithm design and implementation
-% Рассказать ключевую идею алгоритма, что скрытые чтения нужны только для удаления
-% старых данных, и вместо чтений сразу перед обновлением таблицы можно отложить
-% эти чтения до компакта первичного индекса, когда таплы и так и эдак читаются, и
-% можно сразу определить, какие таплы дискардятся. Эти таплы можно раскидывать по
-% вторичным индексам как delete по вторичным ключам и версиям.
-% -- 3.1 Update
-% Сказать, что на апдейты более не читаем. Replace пишем сразу во все индексы.
-% Delete пишем только в первичный индекс.
-% -- 3.2 Compaction
-% При компакте первичного индекса собираются таплы, которые собираются удалиться.
-% Из них извлекаются вторичные ключи по всем вторичным индексам. Эти ключи вместе
-% с версией тапла вставляются в виде delete сразу в дисковую часть каждого
-% вторичного индекса. Когда вторичный индекс компактит, он учитывает эти delete,
-% причем со сверкой версии - это необходимо, так как delete старых таплов попадают
-% по времени во вторичный индекс позже, чем более новые данные.
-% -- 3.3 Read
-% Читаем как обычно. Все чтения лукапят в первичный индекс. Если там тапл не
-% найден, то он пропускается и вторичный индекс читается дальше в соответствии с
-% тем, какой был запрос пользователя.
-% -- 3.4 Implementaion
-% Реализация выполнена на основе БД Tarantool и ее движка Vinyl, который хранит
-% данные в LSM-деревьях по ренжам. Ядро нового алгоритма сосредоточено в
-% процедуре компакта уровней, где из старых таплов извлекаются вторичные ключи и
-% версии, и вставляются сразу на первый уровень (считая с нуля) LSM-деревьев
-% вторичных индексов. Пересортировка удаляемых данных первичного индекса в
-% порядок вторичных индексов выполняется в памяти по мере чтения схлопываемых
-% уровней первичного индекса.
-
-% -- 4. Mathematical basics
-% Привести формулы в двух группах: ДО патча и ПОСЛЕ. В каждой группе вывести
-% сложность replace, delete, primary get. Учесть level_size_ratio, "ветвистость"
-% деревьев в памяти, кол-во таплов в памяти, кол-во уровней на диске и размер
-% первого уровня (считая с нуля) первичного индекса.
-
-% -- 5. Evaluation
-% Сказать, что наибольший прирост получается при replace/delte операциях и
-% зависит, согласно формулам выше, от размеров индексов, ratio и прочего. И что
-% кроме наилучшего случая рассмотрен Linkbench. (Постараться сделать сравнения
-% не только Тарантула с собой, но и с LevelDB и с MySQL (MyRocks)).
-% -- 5.1. Microbench
-% Тут показать волшебный прирост 10х, сказать на чем. И сделать такой же тест для
-% MyRocks и LevelDB (они усосут, но надо понять, насколько - может еще больше).
-% -- 5.2. Linkbench
-% Тут показать результаты, которых пока нет, против тех же БД. Ожидается, что
-% прирост будет не сказать, что сильно велик, так как там много чтений (явных).
-
-% -- 6. Related work
-% Рассказать, что кроме нового алгоритма есть еще куча старых, даже для
-% B-деревьев. Чуть-чуть про них рассказать.
-% -- 7. Conclusion
-% Сказать, что новый алгоритм воскрешает версионность LSM-таблиц со множеством
-% индексов. И что можно оптимизировать. Например, при дампе вторичных индексов
-% лукапить первичный, чтобы проверять, что какие-то таплы уже может можно и не
-% дампить. И помечать такие таплы на диске в первичном индексе, чтобы они при
-% удалении во время компакта не создавали делитов.
-% И что можно сократить расход памяти во время пересортировки до константного,
-% если сделать сортировку слияниями кучки файликов, которые будут копиться во
-% время компакта.
-% -- 8. References
-
-
 \section{Introduction}
 Log-Structured Merge trees were developed for write-intensive tasks in 1990th
 and were used in file systems and for reserve copying. But their prevalence was
@@ -838,6 +742,22 @@ shown on a figure \ref{fig:dump_count_microbench}.
 
 \subsection{Linkbench}
 
+Deferring of updates slows down readings, because any key found in a secondary
+index must be checked to be not dirty in a primary index. The grade of slowing
+depends on loading type - the more updates againts new data insertions, the more
+tuples become dirty, and the slower readings become. On Figure
+\ref{fig:linkbench} Linkbench \cite{Armstrong:linkbench} results are showed.
+Most of requests on this Linkbench run were readings (more than 70\%), and on
+such a loading type read requests are slower than without deferred updates in
+about 2 times.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{linkbench}
+\caption{Linkbench RPS}
+\label{fig:linkbench}
+\end{figure}
+
 \section{Related work}
 Necessity to speed updates up is not a new task. There are some existing works
 on this theme: some of them try to reduce hidden reads number, another try to
@@ -865,241 +785,11 @@ this optimization is actually hardware, and the LSM-tree is not changed, so on
 simple SSDs it does not work. But this method can be combined with deferred
 updates.
 
-\subsection{Tables}
-Because tables cannot be split across pages, the best
-placement for them is typically the top of the page
-nearest their initial cite.  To
-ensure this proper ``floating'' placement of tables, use the
-environment \textbf{table} to enclose the table's contents and
-the table caption.  The contents of the table itself must go
-in the \textbf{tabular} environment, to
-be aligned properly in rows and columns, with the desired
-horizontal and vertical rules.  Again, detailed instructions
-on \textbf{tabular} material
-is found in the \textit{\LaTeX\ User's Guide}.
-
-Immediately following this sentence is the point at which
-Table 1 is included in the input file; compare the
-placement of the table here with the table in the printed
-dvi output of this document.
-
-\begin{table}
-\centering
-\caption{Frequency of Special Characters}
-\begin{tabular}{|c|c|l|} \hline
-Non-English or Math&Frequency&Comments\\ \hline
-\O & 1 in 1,000& For Swedish names\\ \hline
-$\pi$ & 1 in 5& Common in math\\ \hline
-\$ & 4 in 5 & Used in business\\ \hline
-$\Psi^2_1$ & 1 in 40,000& Unexplained usage\\
-\hline\end{tabular}
-\end{table}
-
-To set a wider table, which takes up the whole width of
-the page's live area, use the environment
-\textbf{table*} to enclose the table's contents and
-the table caption.  As with a single-column table, this wide
-table will ``float" to a location deemed more desirable.
-Immediately following this sentence is the point at which
-Table 2 is included in the input file; again, it is
-instructive to compare the placement of the
-table here with the table in the printed dvi
-output of this document.
-
-
-\begin{table*}
-\centering
-\caption{Some Typical Commands}
-\begin{tabular}{|c|c|l|} \hline
-Command&A Number&Comments\\ \hline
-\texttt{{\char'134}alignauthor} & 100& Author alignment\\ \hline
-\texttt{{\char'134}numberofauthors}& 200& Author enumeration\\ \hline
-\texttt{{\char'134}table}& 300 & For tables\\ \hline
-\texttt{{\char'134}table*}& 400& For wider tables\\ \hline\end{tabular}
-\end{table*}
-% end the environment with {table*}, NOTE not {table}!
-
-\subsection{Figures}
-Like tables, figures cannot be split across pages; the
-best placement for them
-is typically the top or the bottom of the page nearest
-their initial cite.  To ensure this proper ``floating'' placement
-of figures, use the environment
-\textbf{figure} to enclose the figure and its caption.
-
-This sample document contains examples of \textbf{.pdf} files to be
-displayable with \LaTeX (See Figures \ref{fig:fly} and \ref{fig:bigfly}).  More details on each of these is found in the
-\textit{Author's Guide}.
-
-\begin{figure}
-\centering
-\includegraphics{fly}
-\caption{A sample black and white graphic (.pdf format).}
-\label{fig:fly}
-\end{figure}
-
-\begin{figure}
-\centering
-\includegraphics[width=1in,height=1in]{fly}
-\caption{A sample black and white graphic (.pdf format)
-that has been resized with the \texttt{includegraphics} command.}
-\label{fig:bigfly}
-\end{figure}
-
-
-As was the case with tables, you may want a figure
-that spans two columns.  To do this, and still to
-ensure proper ``floating'' placement of tables, use the environment
-\textbf{figure*} to enclose the figure and its caption (See Figure~\ref{fig:flies}). And don't forget to end the environment with {figure*}, not {figure}!
-
-\begin{figure*}
-\centering
-\includegraphics{flies}
-\caption{A sample black and white graphic (.pdf format)
-that needs to span two columns of text.}
-\label{fig:flies}
-\end{figure*}
-
-
-Note that only {\textbf{.pdf}} files were used; if you want to include
-{\textbf{.ps}} or {\textbf{.eps}} formats, you can use the
-\texttt{{\char'134}epsfig} or \texttt{{\char'134}psfig}
-commands as appropriate for the different file types.
-
-\subsection{Theorem-like Constructs}
-Other common constructs that may occur in your article are
-the forms for logical constructs like theorems, axioms,
-corollaries and proofs.  There are
-two forms, one produced by the
-command \texttt{{\char'134}newtheorem} and the
-other by the command \texttt{{\char'134}newdef}; perhaps
-the clearest and easiest way to distinguish them is
-to compare the two in the output of this sample document:
-
-This uses the \textbf{theorem} environment, created by
-the\linebreak\texttt{{\char'134}newtheorem} command:
-\newtheorem{theorem}{Theorem}
-\begin{theorem}
-Let $f$ be continuous on $[a,b]$.  If $G$ is
-an antiderivative for $f$ on $[a,b]$, then
-\begin{displaymath}\int^b_af(t)dt = G(b) - G(a).\end{displaymath}
-\end{theorem}
-
-The other uses the \textbf{definition} environment, created
-by the \texttt{{\char'134}newdef} command:
-\newdef{definition}{Definition}
-\begin{definition}
-If $z$ is irrational, then by $e^z$ we mean the
-unique number which has
-logarithm $z$: \begin{displaymath}{\log e^z = z}\end{displaymath}
-\end{definition}
-
-Two lists of constructs that use one of these
-forms is given in the
-\textit{Author's  Guidelines}.
-
-
-There is one other similar construct environment, which is
-already set up
-for you; i.e. you must \textit{not} use
-a \texttt{{\char'134}newdef} command to
-create it: the \textbf{proof} environment.  Here
-is a example of its use:
-\begin{proof}
-Suppose on the contrary there exists a real number $L$ such that
-\begin{displaymath}
-\lim_{x\rightarrow\infty} \frac{f(x)}{g(x)} = L.
-\end{displaymath}
-Then
-\begin{align*}
-l&=\lim_{x\rightarrow c} f(x)
-= \lim_{x\rightarrow c}
-\left[ g{x} \cdot \frac{f(x)}{g(x)} \right ] \\
-&= \lim_{x\rightarrow c} g(x) \cdot \lim_{x\rightarrow c}
-\frac{f(x)}{g(x)} = 0\cdot L = 0,
-\end{align*}
-which contradicts our assumption that $l\neq 0$.
-\end{proof}
-
-Complete rules about using these environments and using the
-two different creation commands are in the
-\textit{Author's Guide}; please consult it for more
-detailed instructions.  If you need to use another construct,
-not listed therein, which you want to have the same
-formatting as the Theorem
-or the Definition\cite{salas:calculus} shown above,
-use the \texttt{{\char'134}newtheorem} or the
-\texttt{{\char'134}newdef} command,
-respectively, to create it.
-
-\subsection*{A {\secit Caveat} for the \TeX\ Expert}
-Because you have just been given permission to
-use the \texttt{{\char'134}newdef} command to create a
-new form, you might think you can
-use \TeX's \texttt{{\char'134}def} to create a
-new command: \textit{Please refrain from doing this!}
-Remember that your \LaTeX\ source code is primarily intended
-to create camera-ready copy, but may be converted
-to other forms -- e.g. HTML. If you inadvertently omit
-some or all of the \texttt{{\char'134}def}s recompilation will
-be, to say the least, problematic.
-
-\section{Conclusions}
-This paragraph will end the body of this sample document.
-Remember that you might still have Acknowledgments or
-Appendices; brief samples of these
-follow.  There is still the Bibliography to deal with; and
-we will make a disclaimer about that here: with the exception
-of the reference to the \LaTeX\ book, the citations in
-this paper are to articles which have nothing to
-do with the present subject and are used as
-examples only.
-%\end{document}  % This is where a 'short' article might terminate
-
-% ensure same length columns on last page (might need two sub-sequent latex runs)
-\balance
-
-%ACKNOWLEDGMENTS are optional
-\section{Acknowledgments}
-This section is optional; it is a location for you
-to acknowledge grants, funding, editing assistance and
-what have you.  In the present case, for example, the
-authors would like to thank Gerald Murray of ACM for
-his help in codifying this \textit{Author's Guide}
-and the \textbf{.cls} and \textbf{.tex} files that it describes.
-
-
 % The following two commands are all you need in the
 % initial runs of your .tex file to
 % produce the bibliography for the citations in your paper.
 \bibliographystyle{abbrv}
 \bibliography{vldb_sample}  % vldb_sample.bib is the name of the Bibliography in this case
-% You must have a proper ".bib" file
-%  and remember to run:
-% latex bibtex latex latex
-% to resolve all references
-
-\subsection{References}
-Generated by bibtex from your ~.bib file.  Run latex,
-then bibtex, then latex twice (to resolve references).
-
-%APPENDIX is optional.
-% ****************** APPENDIX **************************************
-% Example of an appendix; typically would start on a new page
-%pagebreak
-
-\begin{appendix}
-You can use an appendix for optional proofs or details of your evaluation which are not absolutely necessary to the core understanding of your paper. 
-
-\section{Final Thoughts on Good Layout}
-Please use readable font sizes in the figures and graphs. Avoid tempering with the correct border values, and the spacing (and format) of both text and captions of the PVLDB format (e.g. captions are bold).
-
-At the end, please check for an overall pleasant layout, e.g. by ensuring a readable and logical positioning of any floating figures and tables. Please also check for any line overflows, which are only allowed in extraordinary circumstances (such as wide formulas or URLs where a line wrap would be counterintuitive).
-
-Use the \texttt{balance} package together with a \texttt{\char'134 balance} command at the end of your document to ensure that the last page has balanced (i.e. same length) columns.
-
-\end{appendix}
-
 
 
 \end{document}
