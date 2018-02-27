@@ -99,10 +99,10 @@ systems, ending the half-a-century-long dominance of B-trees. The major
 advantage of an LSM tree is that it always writes new data and old data updates
 to disk sequentially. It is made possible due to the ability of the LSM tree to store multiple
 versions of the same key - it allows LSM tree-based tables to not read and delete
-old data explicitly from a primary index on such operations as deletion or
+old data explicitly from the primary index on such operations as deletion or
 replacement. Old data is deleted by new data during the compaction instead. But
 this advantage is nullified by secondary indexes, because replace/delete-like
-operations require reading and deleting old data from each secondary index explicitly.
+operations require reading and explicitly deleting old data from each secondary index.
 This paper presents an LSM tree modification that allows not reading any indexes
 on replacement/deletion even if there are non-secondary indexes in the table.
 Experimental research of the modified LSM tree shows a 1.5-10-times increase
@@ -131,31 +131,31 @@ BigTable, HBase, Riak, MySQL (MyRocks).
 
 However, even SSDs do not help much in one particular widespread case that undermines
 the ability of the LSM tree to store multiple versions of the same keys. It has to do
-with the LSM tree compaction algorithm, and manifests itself on tables with multiple indexes.
+with the LSM tree compaction algorithm, and manifests itself in tables with multiple indexes.
 
 In a primary LSM tree-based index, any replace or delete operation is executed
-with no hidden reads because of the LSM tree's ability to store multiple key versions.
+with no hidden reads because of the ability of the LSM tree to store multiple key versions.
 A new tuple is just inserted into memory, and after some compaction, the old
 tuples get discarded. But it becomes impossible with secondary indexes: if a table
-contains secondary indexes, any update operation must read an old tuple from a
+contains secondary indexes, any update operation must read an old tuple from the
 primary index, extract secondary keys from it, and explicitly delete them from each
-secondary index. That is, updating such a table produces hidden reads from a
+secondary index. That is, updating such a table produces hidden reads from the
 primary index.
 
-Reading from a primary index and explicit deletion of old tuples cannot be avoided in the
-classic LSM tree, because it deletes old versions of the key only if they are
-equal by key. If a request changes a secondary key in an existing tuple and
-does not delete the old one, then it is not deleted from a secondary index.
-As a result, the LSM tree regards the new and the old tuple not as different
-versions of the same key, but as two different keys.
+Reading from the primary index and explicit deletion of old tuples cannot be
+avoided in the classic LSM tree, because it deletes old versions of the key only
+if they are equal by key. If a request changes a secondary key in an existing
+tuple and does not delete the old one, then it is not deleted from a secondary
+index. As a result, the LSM tree regards the new tuple and the old one not as
+different versions of the same key, but as two different keys.
 
-The paper describes a new LSM tree compaction algorithm as well as a new LSM
+This paper describes a new LSM tree compaction algorithm as well as new LSM
 tree-based table update and read algorithms. Replace and delete operations on the new
-LSM tree do not require any reads regardless of the number of secondary indexes, if all of them
-are non-unique. Experiments show exponential growth in the number of requests per
-second (RPS) with some load types and some schemas. For example, on a table with 3
-non-unique secondary indexes and with batched replace/delete requests, the number of RPS
-increased up to 10 times.
+LSM tree do not require any reads regardless of the number of secondary indexes 
+if all of them are non-unique. Experiments show exponential growth in the number
+of requests per second (RPS) with some workload types and some schemas. For example,
+on a table with 3 non-unique secondary indexes and with batched replace/delete
+requests, the number of RPS increased up to 10 times.
 
 \section{Background and motivation}
 This section provides some basic information on the LSM tree: how it can be
@@ -197,9 +197,9 @@ $j$ is newer, so the other one is discarded when compacted.
 
 Compaction is a procedure needed to reduce the number of levels and to discard old tuples
 in order to make room for new ones. Compaction frequency is regulated by the LSM tree
-parameters called \textbf{level size ratio} and \textbf{maximal sublevels count}. In each pair of
+parameters called \textbf{level size ratio} and \textbf{maximal sublevel count}. In each pair of
 neighboring levels $i$ and $i + 1$, the size of level $i + 1$ must at least be greater than
-the size of level $i$ $*$ the level size ratio. If the maximal sublevels count per
+the size of level $i$ $*$ the level size ratio. If the maximal sublevel count per
 level is exceeded or the level size ratio is violated, then compaction merges as many
 sublevels as needed to satisfy both limitations.
 
@@ -211,10 +211,10 @@ independently of the other ranges (see Figure \ref{fig:compaction_schema}).
 In an LSM tree-based table, each index is an LSM tree sorted by index parts.
 It is a common pattern for a table to have one primary index and several
 secondary indexes. A primary index is always unique and stores full tuples,
-including all indexed and non-indexed fields, as they were inserted by a user.
+including all indexed and non-indexed fields, as they were inserted by the user.
 A secondary index stores only its own key parts and primary index parts to save
 memory. Such indexes are called non-covering. Primary index parts are used as a link to
-a full tuple in the primary index, when a search uses a secondary index only.
+a full tuple in the primary index, when the search uses a secondary index only.
 
 The described pattern is not a unique feature of LSM tree-based tables. For
 example, in SQLite, secondary indexes based on a B-tree are non-covering by default,
@@ -222,10 +222,10 @@ too. And each SQLite table has a unique primary index, even if a user did not
 specify it explicitly.
 
 Since secondary indexes store primary index parts, they are linked to primary
-indexes. And if a tuple does not exist in a primary index, it cannot exist in a
+indexes. And if a tuple does not exist in the primary index, it cannot exist in a
 secondary index as well. This is the reason why hidden reads are
 indispensable - if a tuple is replaced with another secondary key or is deleted
-from a primary index, then its old version must be deleted from each secondary
+from the primary index, then its old version must be deleted from each secondary
 index by the old secondary key. Otherwise, table indexes will not be consistent.
 
 \subsection{Multiple index update problem}
@@ -262,7 +262,7 @@ In this section, the basics of the new algorithm are described, followed by thre
 each focusing on a specific part of the algorithm.
 
 The key idea of the algorithm is that deleting old data can be deferred until the
-primary index compaction stage. It allows not doing any hidden reads on replacement
+primary index compaction stage. It allows avoiding any hidden reads on replacement
 and deletion by primary key, since these operations use hidden reads only to identify
 and delete old secondary key versions, not to check consistency. It works on
 tables with non-unique secondary indexes only, because it is impossible to break
@@ -275,16 +275,16 @@ two records: \textit{\{1, 1\}} and \textit{\{2, 2\}}. It is impossible now to do
 replace \textit{\{1, 2\}}, because it produces duplicates in the secondary index.
 
 Of course, in MySQL, for example, replace would delete both the old records, but
-such kind of replace cannot be deferred, because during the primary index
+this kind of replacement cannot be deferred, because during the primary index
 compaction there is no way of knowing that a new tuple with one primary key
 discards an old tuple with another primary key without an explicitly inserted
 deletion. This multi-replace operation must delete old records with different
-primary keys, and it is not considered in the paper.
+primary keys and is not considered in the paper.
 
 The deferred update algorithm consists of three separate parts:
 \begin{enumerate}
 \item Updating level zero of all indexes. This is where replacement and deletion by
-a primary key are inserted into memory and make secondary and primary indexes
+primary key are inserted into memory and make secondary and primary indexes
 malsynchronized.
 \item Compaction, which differs for primary and secondary indexes. The primary
 index detects tuples to discard and sends them to a secondary index as a new
@@ -296,14 +296,14 @@ index must be checked via a primary index lookup.
 \end{enumerate}
 
 \subsection{Deferred update}
-Only two operations can be deferred: replacement and deletion by a primary key.
+Only two operations can be deferred: replacement and deletion by primary key.
 First, an algorithm for replacement is presented, and then for deletion, which is
 very similar.
 
 Consider a table with one primary index and several non-unique secondary indexes.
-Assume a user executes the replace operation. A tuple specified in replace is inserted
-into the memory level of each index as is, with no preliminary reading and deletion
-of the old tuple from secondary indexes.
+Assume the user executes the replace operation. A tuple specified in replace is inserted
+into the memory level of each index as is, without preliminarily reading and deleting
+the old tuple from secondary indexes.
 \begin{figure}
 \centering
 \includegraphics[width=0.46\textwidth]{table_after_deferred_update}
@@ -316,11 +316,11 @@ discarded tuples as non-discarded, like in the example given in Figure
 \ref{fig:table_after_deferred_update}: there is a tuple with
 version 3, which gets discarded in the primary index by a newer tuple with the same
 key and version 5. But secondary keys of these tuples are different, so a
-secondary index sees the tuple with version 3 as a separate non-discarded tuple.
+secondary index regards the tuple with version 3 as a separate non-discarded tuple.
 Such tuples, visible in a secondary index, but invisible in the primary one, are
 called \textbf{dirty}.
 
-Deletion by a primary key is inserted only in the primary index memory. It cannot
+Deletion by primary key is inserted only in the primary index memory. It cannot
 be inserted in a secondary index, because a corresponding secondary key is
 unknown without any hidden reads. In this case, a tuple discarded by the delete
 operation becomes dirty in each secondary index.
@@ -332,7 +332,8 @@ the new LSM tree compaction procedure.
 \subsubsection{Primary index}
 
 Compaction is triggered by the same signals as in the classic LSM tree - by
-too many sublevels, or excessively large difference in the size of neighboring levels.
+too many sublevels per level, or excessively large difference in the size of
+neighboring levels.
 
 Consider the basic compaction, with no deferred updates and dirty tuples.
 Assume the levels consist of sublevels belonging to key ranges, and a sublevel
@@ -364,8 +365,8 @@ parts of the index. So sublevels created for secondary indexes during the primar
 index compaction must be sorted into the secondary index order. A sorting method
 depends on the implementation, and can be one of these:
 \begin{itemize}
-\item in-memory quick sort after all tuples are read from disk;
-\item in-memory tree sort, whereby a tree is created for each index prior to
+\item in-memory quick sort after all tuples have been read from disk;
+\item in-memory tree sort, whereby a tree is created for each index prior to the
 compaction and is being filled as tuples are being read from disk. A tree can be of
 any type: binary, red-black, or B-tree. When the primary index compaction is finished, the
 tree is written to a secondary index sublevel as a sorted array. So a tree allowing for a fast
@@ -377,13 +378,13 @@ The idea is to do an in-memory sort of discarded tuples by batches of some fixed
 size and then dump them as sorted arrays into temporary files. When the primary index
 compaction is over, these temporary files are merge-sorted into a single sublevel
 intended for a secondary index. Merge-sorting the temporary files is done in the same
-way as compacting sublevels - read and write files in parts, without reading them all
-into memory. The described procedure is performed for each secondary index.
+way as compacting sublevels - files are read and written in parts, without being read
+entirely into memory. The described procedure is performed for each secondary index.
 \end{itemize}
 
 \subsubsection{Secondary index}
 
-Secondary index compaction is slightly changed to correctly process deletes received
+Secondary index compaction is slightly modified to correctly process deletes received
 from the primary index. The point is that these deletes have both the same version and
 the same key as the dirty tuples for which they are intended, and the compaction
 procedure must correctly handle these matching versions and keys.
@@ -399,15 +400,15 @@ compaction. Compaction is called major if all the sublevels of all levels are co
 \label{fig:secondary_compaction_example}
 \end{figure}
 Figure \ref{fig:secondary_compaction_example} provides an example of
-a secondary index compaction with sublevels received from the primary index.
+the secondary index compaction with sublevels received from the primary index.
 In the example, the primary and secondary indexes store two tuples:
 \textit{\{pk1, sk1\}} and \textit{\{pk1, sk2\}}. In the primary index, different
 versions of the key \textit{pk1} are stored. When the primary index is compacted,
 the tuple \textit{\{pk1, sk1\}} is discarded and sent to the secondary index as a
-DELETE tuple with the same version. During a secondary index compaction, this
-DELETE tuple with version 1 meets the dirty tuple \textit{\{pk1, sk1\}} with
+delete tuple with the same version. During a secondary index compaction, this
+delete tuple with version 1 meets the dirty tuple \textit{\{pk1, sk1\}} with
 version 1 - their keys and versions are equal. It is assumed that it is not a major
-compaction, so the dirty tuple \textit{\{pk1, sk1\}} is discarded and the DELETE
+compaction, so the dirty tuple \textit{\{pk1, sk1\}} is discarded and the delete
 tuple remains.
 
 \subsection{Read}
@@ -426,7 +427,7 @@ lookups in the primary index in order to exclude dirty tuples.
 \caption{Secondary index read example}
 \label{fig:secondary_reading_example}
 \end{figure}
-In Figure \ref{fig:secondary_reading_example}, selecting by a secondary key
+In Figure \ref{fig:secondary_reading_example}, selecting by secondary key
 returns a tuple on the third attempt. First, \textit{\{pk1, sk1\}} is read as a tuple having
 the highest known version of this secondary key. It appears to be dirty, because
 in the primary index a tuple with the same primary key has a different version and
@@ -476,7 +477,7 @@ algorithm itself: new replaces/deletes, compaction, and reads.
 
 New replaces/deletes are quite simple: they just do not do any hidden reads. Replace is
 inserted into level zero of all indexes of a Vinyl space, whereas delete is inserted into the
-primary one only.
+primary index only.
 
 Compaction is the most complex part of the implementation. As applied to
 Vinyl and LSM trees, it works as follows before the deferred update:
@@ -508,7 +509,7 @@ scheduled for compaction, the main thread sends a worker thread the information
 not only about the primary index sublevel, but about each secondary index key parts,
 which are needed to extract secondary keys from primary index tuples.
 
-While the primary index is being merge-sorted, discarded tuples are placed into
+While the primary index is being merge-sorted, discarded tuples are put into
 in-memory B+ trees created for each secondary index. Once the
 primary index compaction is over and a new sublevel is created, the filled
 B+ trees are dumped into sublevel files for secondary indexes.
@@ -523,7 +524,7 @@ index is situated at the first level of the LSM tree, because it can contain any
 any primary index level, which means that it can overlap any sublevel stored on disk.
 These deletes must overlap dirty tuples for which they are intended.
 
-The implementation of reading is changed to take the existence of dirty tuples
+The implementation of reading is modified to take the existence of dirty tuples
 into account. This is the same thing that occurs during the secondary index compaction -
 the index contains both dirty tuples and their deletes with the same keys and
 versions. If an iterator sees this match, it skips these versions and all higher ones.
@@ -561,7 +562,7 @@ According to the definition of the LSM tree level size ratio, level $i$ is $r$ t
 larger than level $i - 1$, so the total number of levels is $O(log_rN)$
 \cite{kai:slimdb}. Let's denote it as $lc$.
 
-The deferred update algorithm allows not doing reads, and puts new tuples in the
+The deferred update algorithm allows avoiding reads, and puts new tuples in the
 memory level - it is the only part that the old and new algorithms have in comon.
 Memory level access complexity depends on the number of tuples, which can be
 calculated from $N$ and the number of levels. Denoting the memory (alias zero)
@@ -736,19 +737,18 @@ shown in Figure \ref{fig:dump_count_microbench}.
 
 \subsection{LinkBench}
 
-Deferring of updates slows down readings, because any key found in a secondary
-index must be checked to be not dirty in a primary index. The grade of slowing
-depends on loading type - the more updates againts new data insertions, the more
-tuples become dirty, and the slower readings become. On Figure
-\ref{fig:linkbench} Linkbench \cite{Armstrong:linkbench} results are showed.
-Most of requests on this Linkbench run were readings (more than 70\%), and on
-such a loading type read requests are slower than without deferred updates in
-about 2 times.
+Deferring updates slows down readings, because any key found in a secondary
+index must be checked for not being dirty in the primary index. The extent of slowdown
+depends on the workload type - the more updates againts new data insertions, the more
+tuples become dirty and the slower readings become. Figure \ref{fig:linkbench}
+shows the LinkBench \cite{Armstrong:linkbench} results. Most requests in this
+LinkBench run were readings (over 70\%), and, given this kind of workload, read
+requests are 2 times slower than without deferred updates.
 
 \begin{figure}
 \centering
 \includegraphics[width=0.46\textwidth]{linkbench}
-\caption{Linkbench RPS}
+\caption{LinkBench RPS}
 \label{fig:linkbench}
 \end{figure}
 
