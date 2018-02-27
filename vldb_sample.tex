@@ -268,7 +268,7 @@ their order, keys, and types. Even delete operations are put in level zero as a 
 special type.
 
 When the number of levels grows too large, the LSM tree is compacted: several levels are
-merged into a new one. During the compaction, new tuples supersede old tuples with the same
+merged into a new one. During the compaction, new tuples discard old tuples with the same
 key. For example, the delete operation discards all older data and sometimes itself; the replace
 operation discards all older data, but never itself.
 
@@ -577,18 +577,18 @@ primary one only.
 Compaction is the most complex part of the implementation. As applied to
 Vinyl and LSM trees, it works as follows before the deferred update:
 \begin{enumerate}
-\item Main thread detects that a compaction is necessary (for example, level
-size ratio is violated or a level consists of too many sublevels), and sends a
-request to a worker thread with information, which sublevels need to compact, in
+\item The main thread detects that compaction is necessary (for example, the level
+size ratio is violated or a level consists of too many sublevels) and sends a
+request to a worker thread with the information on which sublevels to compact and in
 which files they are stored;
-\item Worker thread sees request and starts compaction. Compaction is executed
-using merge-sort of sublevels files. Processed files are not deleted or changed
-by a worker thread, because they may be used now in the main thread for reads.
-When the worker has finished the work, it has one new sublevel file. The main
-thread is notified, that the work is done;
-\item After a while, one of fibers of the main thread sees the finished worker,
-gets the new sublevel, puts it in the LSM-tree and deletes old sublevels and
-their files atomically.
+\item The worker thread receives the request and starts compaction, which is done
+via merge-sorting sublevel files. Processed files are not deleted or changed
+by the worker thread, because they may now be used in the main thread for reads.
+Once the worker thread finishes its work, it has one new sublevel file - and the main
+thread is notified about it;
+\item After a while, one of main-thread fibers notices the finished worker thread,
+gets the new sublevel, puts it in the LSM tree, and atomically deletes old sublevels and
+their associated files.
 \end{enumerate}
 
 \begin{figure}
@@ -597,128 +597,129 @@ their files atomically.
 \caption{Primary index compaction schema}
 \label{fig:compaction_implementation}
 \end{figure}
-After the deferred update is applied, the compaction procedure's second and
-third steps are completely different. See Figure
-\ref{fig:compaction_implementation} as illustration. When a primary index is
-scheduled for compaction, the main thread sends to a worker info not only about
-a primary indexe's sublevel, but about each secondary index key parts. They are
-needed to extract secondary keys from primary index tuples.
+After the deferred update is applied, the second and third steps of the compaction
+procedure are completely different. See Figure
+\ref{fig:compaction_implementation} for an example. When the primary index is
+scheduled for compaction, the main thread sends a worker thread the information
+not only about the primary index sublevel, but about each secondary index key parts,
+which are needed to extract secondary keys from primary index tuples.
 
-While the primary index is being merge-sorted, discarded tuples are stored into
-in-memory B\textsuperscript{+}-trees created for each secondary index. When a
-primary index compaction is finished and a new sublevel is created, the filled
-B\textsuperscript{+}-trees are dumped into sublevel files for secondary indexes.
-The dump is fast, because B\textsuperscript{+}-tree can be fast iterated due to
-links between neighbour keys. At this step the worker thread has sublevel files
-for each index of the table, and it notifies the main thread about the finished
-work.
+While the primary index is being merge-sorted, discarded tuples are placed into
+in-memory B+ trees created for each secondary index. Once the
+primary index compaction is over and a new sublevel is created, the filled
+B+ trees are dumped into sublevel files for secondary indexes.
+The dump is fast, because a B+ tree can quickly be iterated over due to
+links between neighboring keys. At this step, the worker thread has sublevel files
+for each table index, and it notifies the main thread about the finished work.
 
-One of the main thread's fiber replaces compacted sublevels with a new one in a
-primary index, and puts secondary index's sublevels into corresponding indexes
-at the LSM-tree's first level. Secondary index sublevel received from a primary
-index is on the LSM-tree's first level, because it can contain any DELETEs from
-first to last primary index levels and it means, that it can overlap any
-sublevel stored on disk. These DELETEs must overlap dirty tuples for which
-intended.
+One of main-thread fibers replaces the compacted sublevels with the new one in the
+primary index and puts secondary index sublevels into corresponding indexes
+at the first level of the LSM tree. The secondary index sublevel received from the primary
+index is situated at the first level of the LSM tree, because it can contain any deletes from
+any primary index level, which means that it can overlap any sublevel stored on disk.
+These deletes must overlap dirty tuples for which they are intended.
 
-Implementation of reading is changed to take into account dirty tuples
-existence. There is the same point that during a secondary index compaction -
-the index contains both dirty tuples and their DELETEs with the same key and
-version. If an iterator sees this match, it skips these versions and all olders.
-All other found tuples are looked up in a primary index. If in the primary index
-the tuple is found with the same secondary key and version, as the tuple from
-the secondary index, then this tuple is not dirty and can be returned to an
-user. Else the tuple is dirty - its DELETE while is not generated by primary
-index compaction. The salient feature of this implementation that sublevels,
-received from a primary index, are undistinguishable from usual sublevels, and
-they are being read together with others. It allows to avoid lookup in a
-primary index, if a tuple is dirty and its DELETE already is in the secondary
-index. But there is overhead for reading these additional sublevels.
+The implementation of reading is changed to take the existence of dirty tuples
+into account. This is the same thing that occurs during the secondary index compaction -
+the index contains both dirty tuples and their deletes with the same keys and
+versions. If an iterator sees this match, it skips these versions and all higher ones.
+All the other discovered tuples are looked up in the primary index. If the primary index
+contains a tuple with the same secondary key and version as a tuple from
+the secondary index, then this tuple is not dirty and can be returned to the
+user. Otherwise the tuple is dirty - its delete is not generated by the primary
+index compaction. The salient feature of this implementation is that sublevels
+received from the primary index are indistinguishable from regular sublevels and
+are being read together with the others. It allows avoiding lookups in the
+primary index if a tuple is dirty and its delete is already in the secondary
+index. However, there is a certain overhead associated with reading these
+additional sublevels.
 
-There is another way to implement reading, which has its own benefits and
-drawbacks. The key concept is to distinguish sublevels received from a primary
-index from others and use them for compaction only, not for reading. It allows
-to read less sublevel files, but compels to do lookups in a primary index on
-each tuple even if the dirty tuple's DELETE is already received from the primary
-index.
+There is another way to implement reading, and it has its own benefits and
+drawbacks. The key concept is to distinguish between sublevels received
+from the primary index and other sublevels and use them for compaction
+only, not for reading. It allows reading fewer sublevel files, but necessitates
+lookups in the primary index for each tuple even if a dirty tuple's delete is
+already received from the primary index.
 
-\section{Mathematical basics}
+\section{Mathematical foundations}
 
-In this section the mathematical complexity of original update algorithm is
-compared against the deferred one's. There are used the following known values:
+In this section, the mathematical complexity of the original update algorithm is
+compared with that of the deferred update algorithm. The following known
+values are used:
 \begin{align*}
-N &- \text{tuples number on all levels}, \\
-b &- \text{zero-level B\textsuperscript{+}-tree branching factor}, \\
+N &- \text{total number of tuples on all levels}, \\
+b &- \text{zero-level B+ tree branching factor}, \\
 r &- \text{level size ratio}, \\
-K &- \text{total indexes number}.
+K &- \text{total number of indexes}.
 \end{align*}
 
-According to LSM-tree level size ratio definition, level $i$ is $r$ times
-bigger, than $i - 1$, so total count of levels is $O(log_rN)$
-\cite{kai:slimdb}. Lets denote it as $lc$.
+According to the definition of the LSM tree level size ratio, level $i$ is $r$ times
+larger than level $i - 1$, so the total number of levels is $O(log_rN)$
+\cite{kai:slimdb}. Let's denote it as $lc$.
 
-Deferred update algorithm allows to do not reads, but it puts new tuples in
-memory level, and it is the only common part of old and new algorithms. Memory
-level access complexity depends on tuples number, which can be calculated from
-$N$ and levels number. Denoting memory (alias zero) level size as $m$, calculate
-it via geometrical progression sum formula:
+The deferred update algorithm allows not doing reads, and puts new tuples in the
+memory level - it is the only part that the old and new algorithms have in comon.
+Memory level access complexity depends on the number of tuples, which can be
+calculated from $N$ and the number of levels. Denoting the memory (alias zero)
+level size as $m$, it can be calculated by using the geometrical progression sum formula:
 \begin{gather*}
 N = m + m*r + m*r^2 + ... + m*r^{lc}, \\
 N = \frac{m(1 - r^{lc+1})}{1 - lc}, \\
 m = \frac{N(1 - r)}{1 - r^{lc + 1}}.
 \end{gather*}
 
-In the scope of the paper, memory level is B\textsuperscript{+}-tree, in which
-search and insertion complexity is $O(log_bm)$.
-Total complexity of replace and delete before deferred update includes point
-search on disk - complexity of this operation is $O(log_rN)$. It is associated
-with levels number because disk index of levels (pages, their minimal and
-maximal keys, versions) is stored in memory and needed pages on a disk for a
-certain key can be found with no disk access. Disk is accessed only to read
-pages, which can contain a sought key.
+In the scope of this paper, the memory level is a B+ tree, which has the
+search and insertion complexity of $O(log_bm)$. The total complexity of
+replace and delete before the deferred update includes point search on
+disk - the complexity of this operation is $O(log_rN)$. It is associated
+with the number of levels, because the disk index of levels (pages, their minimal and
+maximal keys, versions) is stored in memory, and necessary on-disk pages for a
+certain key can be found without accesing disk. Disk is only accessed to read
+pages that can contain the required key.
 
-Using found parameters, the complexity of update can be calculated:
+Using the found parameters, the complexity of update can be calculated as follows:
 
 \underline{Complexity of replace}:
 \begin{displaymath}
 O(log_bm) + O(log_r(N - m)) + O(log_bm) * (2K - 1)
 \end{displaymath}
-Do hidden read: scan for an old tuple in memory level ($O(log_bm)$), on
-disk ($O(log_r(N - m))$). In the worst case an old tuple with the same primary
-key is found, so insert into memory level ($O(log_bm)$) of each secondary index
-two tuples ($2(K - 1)$): DELETE of the old one and the new tuple. In the primary
-index the new tuple discards the old one without DELETE, so in the primary
-index only one tuple is inserted ($2(K - 1) + 1 = 2K - 1$).
+Do a hidden read: search for an old tuple in the memory level ($O(log_bm)$) and on
+disk ($O(log_r(N - m))$). In the worst-case scenario, the old tuple with the same primary
+key is found, so two tuples ($2(K - 1)$) are inserted into the memory level ($O(log_bm)$)
+of each secondary index: the old tuple's delete and the new tuple. In the primary
+index, the new tuple discards the old one without delete, so only one tuple is inserted
+($2(K - 1) + 1 = 2K - 1$).
 
 \underline{Complexity of delete}:
 \begin{displaymath}
 O(log_bm) + O(log_r(N - m)) + O(log_bm) * K
 \end{displaymath}
-Do hidden read: scan for an old tuple in the primary index disk and memory
-($O(log_bm) + O(log_r(N - m))$). In the worst case an old tuple is found -
-insert into memory level of each index DELETE tuple ($O(log_bm) * K$).
+Do a hidden read: search for an old tuple in the primary index on disk and in memory
+($O(log_bm) + O(log_r(N - m))$). In the worst-case scsenario, the old tuple is found,
+so a delete tuple is inserted into the memory level of each index ($O(log_bm) * K$).
 
-After the deferred update is implemented all hidden reads disappear.
+After the deferred update is implemented, all hidden reads are eliminated.
 
 \underline{Complexity of \textbf{deferred} replace}:
 \begin{displaymath}
 O(log_bm) * K
 \end{displaymath}
-Simply insert a new tuple into memory levels of all indexes - no DELETEs, no
-hidden reads. They are deferred until compaction. The deferred replace is at
-least twice faster than classical one according to the calculations below:
+A new tuple is inserted into the memory level of all indexes - no deletes, no
+hidden reads: they are deferred until compaction. The deferred replace is at
+least twice as fast as the classic one, according to the calculations below:
 \begin{gather*}
 \frac{O(log_bm) + O(log_r(N - m)) + O(log_bm) * (2K - 1)}{O(log_bm) * K} = \\
 \frac{O(log_bm * 2K) + O(log_r(N - m))}{O(log_bm) * K} = \\
 2 + \frac{O(log_r(N - m))}{O(log_bm) * K}.
 \end{gather*}
-LSM-trees zero level size is bounded above by RAM size, indexes number is set
-once when a database schema is created and is changed rare, zero-level
-B\textsuperscript{+}-tree's branching factor is constant, so the nominator
-$O(log_bm) * K$ can be treated as constant. Denominator contains $N$, which
-in write-intensive tasks can be huge (billions and more) and the bigger it is
-the bigger is the difference between speed of deferred and simple update.
-For example, for the following estimation:
+The level zero size of an LSM tree is bounded above by the RAM size. The
+number of indexes is set once when a database schema is created and is
+rarely changed afterward, the zero-level B+ tree branching factor is a constant,
+so the denominator $O(log_bm) * K$ can be treated as a constant as well.
+The numerator contains $N$, which can be huge (billions and more) in
+write-intensive tasks, and the larger it is, the larger is the difference between
+the speed of the deferred update and the regular one. For example, for the
+following estimation:
 \begin{align*}
 &r = 3, \\
 &b = 10, \\
@@ -726,20 +727,20 @@ For example, for the following estimation:
 &N = 10^8, \\
 &K = 5.
 \end{align*}
-the deferred replace is faster in $~2.55$ times in theory. In the reality the
-speed growth is much and much greater, because access to disk is much slower
-than access to memory even for SSD. And exactly on disk speed depends the
-denominator $O(log_r(N - m))$ - when $N$ is big, most of tuples are stored on
-disk. It is because it is easy to get speed growth up to 10 times even on small
+the deferred replace is theoretically $~2.55$ times faster. In reality, the
+speed increase is far greater, because disk access is much slower
+than memory access, even for SSDs. And the numerator $O(log_r(N - m))$
+depends on the speed of disk access: when $N$ is large, most tuples are stored on
+disk. That is why it is easy to get up to 10 times speed increase even on small
 tables.
 
 \underline{Complexity of \textbf{deferred} delete}:
 \begin{displaymath}
 O(log_bm)
 \end{displaymath}
-Insert DELETE into primary indexe's memory level only. Because only primary
-index is used, the deferred delete is faster than the simple in at least $K + 1$
-times, and the more tuples are on disk, the faster deferred delete is:
+Delete is inserted into the memory level of the primary index only. Since only the primary
+index is used, the deferred delete is at least $K + 1$ times faster than the regular delete,
+and the more tuples are stored on disk, the faster the deferred delete gets:
 \begin{gather*}
 \frac{O(log_bm) + O(log_r(N-m)) + O(log_bm) * K}{O(log_bm)} = \\
 \frac{O(log_bm)*(K + 1) + O(log_r(N-m))}{O(log_bm)} = \\
@@ -748,18 +749,19 @@ K + 1 + \frac{O(log_r(N-m))}{O(log_bm)}
 
 \section{Evaluation}
 
-The implemented algorithm is tested on two benchmarks: microbench, on which the
-difference between usual and deferred update are most significant, and
-linkbench. Both benchmarks are done on a single machine with Apple SSD SM0512L,
+The implemented algorithm is tested on two benchmarks: Microbench, on which the
+difference between the regular update and the deferred one is most pronounced, and
+LinkBench. Both benchmarks are done on a single machine with Apple SSD SM0512L,
 Intel i7 2.7Ghz, 4 cores.
 
 \subsection{Microbench}
 
 The benchmark compares stock Tarantool vs Tarantool with deferred updates.
-Obviously, the biggest throughput improve can be achieved on workload consisting
-of many replaces and deletions to a table with non-unique secondary indexes.
-The database schema consists of one space on Vinyl engine, one primary index on
-a first field, and 4 secondary indexes each on a one field. In SQL syntax:
+Obviously, the largest throughput increase can be achieved with the workload
+consisting of many replaces and deletions on a table with non-unique secondary
+indexes. The database schema consists of one space on the Vinyl engine, one primary
+index on the first field, and 4 secondary indexes, each on one field. In terms of the
+SQL syntax, it looks as follows:
 \begin{verbatim}
 create table test (field1 unsigned integer primary key, field2 unsigned integer,
 		   field3 unsigned integer, field4 unsigned integer,
@@ -780,47 +782,47 @@ create not unique index on test(field5);
 \begin{figure}
 \centering
 \includegraphics[width=0.46\textwidth]{disk_stmt_microbench}
-\caption{Microbenchmark disk statement number}
+\caption{Microbenchmark disk statement count}
 \label{fig:disk_stmt_microbench}
 \end{figure}
 
 \begin{figure}
 \centering
 \includegraphics[width=0.46\textwidth]{dump_count_microbench}
-\caption{Microbenchmark dump number}
+\caption{Microbenchmark dump count}
 \label{fig:dump_count_microbench}
 \end{figure}
 
-LSM-tree's zero-level size is restricted with 128Mb. Workload is generated and
-sent via network by 4 clients on the same machine as Tarantool (unix sockets are
-used - overhead of network is minimal). Each client generates replaces and
-deletions by primary key in batches with random size 1 to 500 tuples. Half of
-tuples are deletions and half are replaces. A tuple consists of 5 fields with
-total size about 50 bytes (including tuple meta info). All keys are between 1
-and 1000000.
+The level zero size of an LSM tree is capped at 128 MB. The workload is generated and
+sent via network by 4 clients on the same machine that is running Tarantool
+(unix sockets are used, minimizing the network overhead). Each client generates
+replaces and deletions by primary key in random-sized batches (1-500 tuples).
+A half of the tuples are deletions and the other half are replaces. A tuple consists
+of 5 fields with the total size of about 50 bytes (including tuple meta information). All
+keys range between 1 and 1,000,000.
 
-There are two worker threads to dump and compact levels. Level size ratio is
-3.5, maximal sublevels count on a level is 2, bloom filter has 5\% false
-positive rate, page size is 8Kb (about 160 tuples capacity).
+There are two worker threads for dumping and compacting levels. The level size ratio is
+3.5. The maximal number of sublevels per level is 2. The Bloom filter has a 5\% false
+positive rate. The page size is 8 KB (about 160 tuples).
 
-The request-per-second (RPS) results are on Figure \ref{fig:rps_microbench}.
+The RPS results are presented in Figure \ref{fig:rps_microbench}.
 
-There are some aggregated RPS values in Table \ref{table:rps_microbench}.
-According to values in the table, on such a little table with less than 1000000
-tuples RPS growths in 6 times.
+Table \ref{table:rps_microbench} contains some aggregated RPS values that show
+that on such a small table with less than 1,000,000 tuples, the number of RPS has 
+grown 6 times.
 
-Because of a much higher number of RPS, the table is filled faster, as shown in Figure
-\ref{fig:disk_stmt_microbench}. And the memory level is dumped more frequently, as
+Given a much higher number of RPS, the table is filled faster, as shown in Figure
+\ref{fig:disk_stmt_microbench}, and the memory level is dumped more frequently, as
 shown in Figure \ref{fig:dump_count_microbench}.
 
 \begin{table}
 \centering
-\caption{Microbenchmark RPS aggregated}
+\caption{Microbenchmark aggregated RPS}
 \label{table:rps_microbench}
 \begin{tabular}{|c|c|c|} \hline
 \cellcolor{table_header}&
 \cellcolor{table_header}Deferred update &
-\cellcolor{table_header}Simple update\\ \hline
+\cellcolor{table_header}Regular update\\ \hline
 
 \cellcolor{table_header}Average &112343 r/s &21681 r/s\\ \hline
 \cellcolor{table_header}Maximal &132316 r/s &89292 r/s\\ \hline
@@ -828,34 +830,33 @@ shown in Figure \ref{fig:dump_count_microbench}.
 \hline\end{tabular}
 \end{table}
 
-\subsection{Linkbench}
+\subsection{LinkBench}
 
 \section{Related work}
-Necessity to speed updates up is not a new task. There are some existing works
-on this theme: some of them try to reduce hidden reads number, another try to
-defer some computations until reads. Various decisions are developed not for
-LSM-trees only for for B-trees too.
+Accelerating updates is not a new task. There are some existing works
+on this topic: some try to reduce the number of hidden reads, others try to
+defer some computations until reads. Various solutions are designed not only for
+LSM trees, but for B-trees as well.
 
-The problem of too long updates appeared earlier than SSD disks, when B-trees
-was the very widespread data structure for HDDs. In the work
-\cite{Edward:incremental_update} authors propose a method of deferring updates
-of B-tree until updated keys are read. Updates are stored in
-\textit{differential files}, which are used firtsly to lookup each key.
-Differential files were first proposed in 1976 \cite{Lohman:differential_files}
-as a method of B-tree multiversion support. It is curious that LSM-tree
-investigated much later actually completely consists of differential files.
-Differential files allowed to store multiple versions, but they could not reduce
-cost of random read-writes in B-trees.
+The problem of updates that take too long predates the emergence of SSDs
+and traces back to when B-trees were a very widespread data structure for
+HDDs. In the work \cite{Edward:incremental_update}, authors propose a
+method of deferring B-tree updates until the updated keys have been read.
+Updates are stored in \textit{differential files}, which are used to look up
+each key. Differential files were first proposed in 1976 \cite{Lohman:differential_files}
+as a method of B-tree multiversion support. It is curious to note that LSM trees,
+which were investigated much later, actually consist entirely of differential files.
+Differential files allowed storing multiple versions, but they could not reduce
+the cost of random reads and writes in B-trees.
 
-In 2014 another optimization of LSM-tree performance was proposed
-\cite{Wang:open_channel_ssd} on a hardware level. According to this paper, SSDs
-do not allow fully utilize I/O performance because of providing only one channel
-to an operating system even if SSD has multiple channels, which can be accessed
-simultaneously. On the base of custom LevelDB, it was showed, that usage of
-open-channel SSD (SDF) allows to improve throughput in more than 4 times. But
-this optimization is actually hardware, and the LSM-tree is not changed, so on
-simple SSDs it does not work. But this method can be combined with deferred
-updates.
+In 2014, another LSM tree performance optimization was proposed
+\cite{Wang:open_channel_ssd} on the hardware level. According to this paper, SSDs
+do not allow fully utilizing I/O capacity, because they provide only one channel
+to the operating system even if they have multiple channels that can be accessed
+simultaneously. By using custom LevelDB, it was shown that open-channel SSDs
+(SDFs) allow for more than 4 times throughput increase. But this optimization is
+purely hardware, as the LSM tree is not changed at all, so it will not work for
+regular SSDs. However, this method can be combined with deferred updates.
 
 \subsection{Tables}
 Because tables cannot be split across pages, the best
